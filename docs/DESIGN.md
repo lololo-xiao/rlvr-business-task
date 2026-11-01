@@ -12,7 +12,9 @@
 ```
 【售后工单】订单号 O1001：我现在收到的快递是坏的，照片已经上传了，可以退货吗？
 请按平台售后政策处理本工单，并以 JSON 输出最终结果：
-{"order_id": str, "decision": "refund|reject|escalate|wait_return", "refund_amount": number, "refund_id": str|null}
+{"order_id": str, "decision": "refund|reject|escalate|wait_return", "refund_amount": number, "refund_id": str|null,
+ "reject_reason": "outside_window|invalid_evidence|non_returnable"|null}
+（decision 为 reject 时必须给出 reject_reason，否则为 null）
 ```
 
 共 10 个任务实例（见 `rlvr_task/tasks.py: TASKS`）。它们用同一个模板，只是订单不同，覆盖了全部 4 种决策分支：
@@ -26,11 +28,12 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | `decision` | `refund` 已退款 / `reject` 不予退款 / `escalate` 转人工 / `wait_return` 等待退货包裹 |
 | `refund_amount` | 应退金额。`reject` 时填 0；`escalate` 和 `wait_return` 填按政策算出的应退金额 |
 | `refund_id` | `decision=refund` 时必须是 `issue_refund` 返回的真实 id，否则填 `null` |
+| `reject_reason` | 仅 `reject` 时必填：`outside_window` 超出时限 / `invalid_evidence` 没有有效照片 / `non_returnable` 有有效照片的商品都不可退。原因码不对按决策错误处理；缺失或非法按格式错误处理 |
 
 ### 成功判定
 
 奖励为 1.0，当且仅当以下三点同时满足：
-- 决策正确；
+- 决策正确（reject 时原因码也必须正确）；
 - 金额在容差范围内；
 - 环境最终状态与决策一致：该退款的，恰好退了一次，且 id 和金额都匹配；不该退款的，没有任何退款记录。
 
@@ -44,7 +47,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | 应退金额 | 对每件可退商品计算 单价 × 认可损坏数量 × 比例，再求和。比例默认 100%，运费由商家全包；要改比例或加收运费，必须转人工 |
 | 人工审核阈值 | 应退金额超过 bronze 200 / silver 500 / gold 1000 时，必须转人工 |
 | 退款时机 | 退货包裹到达商家（状态为 `arrived_at_merchant`）后才能退款；否则提醒顾客寄回，并等待 |
-| 规则优先级 | 超出时限 → 没有任何可退且有有效证据的商品（这两种都是 reject）→ 超过阈值转 escalate → 包裹未到为 wait_return → refund |
+| 规则优先级 | 超出时限（reject / `outside_window`）→ 没有任何可退且有有效证据的商品（reject：有有效照片但都不可退为 `non_returnable`，否则为 `invalid_evidence`）→ 超过阈值转 escalate → 包裹未到为 wait_return → refund |
 
 ### 隐含约束（题面不写，需要 Agent 自己推导）与陷阱数据
 
@@ -115,7 +118,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 1. 从任务文本中解析出订单号，再由 `tasks.solve()` 在**基础库**上按规则算出标准答案（不是硬编码的）。
 2. 解析 Agent 的输出（可以是 dict，也可以是 JSON 字符串，允许用 ``` 包裹），然后做 schema 校验。校验失败直接得 **0**，这是唯一会得 0 的情况。
 3. 计算三个分项（权重见 `config.REWARD_WEIGHTS`）：
-   - `decision`，权重 0.5：决策是否与标准答案一致；
+   - `decision`，权重 0.5：决策是否与标准答案一致；reject 时原因码也必须一致；
    - `amount`，权重 0.3：误差 ≤ max(0.01, 1%) 时满分；超出后随相对误差线性衰减，到 20% 时降为 0；
    - `execution`，权重 0.2：环境最终状态是否与标准答案一致。
 4. 套用硬上限。多个上限同时触发时，取最低的那个：
@@ -129,7 +132,9 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
    | dry-run 通过了，但没有执行 `issue_refund`，却声称已退款 | 0.2 |
    | 实际已退款，但答案声称没退，或 `refund_id` 对不上 | 0.2 |
    | 没有传 env_state 时声称退款（无法核实） | 0.2 |
-   | 决策错误 | 0.2 |
+   | 误拒：标准答案不是 reject，Agent 却拒绝了（直接伤害顾客） | 0.1 |
+   | 误转人工：标准答案不是 escalate，Agent 却转了人工（有人兜底，但浪费审核人力） | 0.2 |
+   | 其他决策错误（包括 reject 原因码写错） | 0.2 |
 
 5. **保底 0.1**：只要答案能解析、格式合法，最低就是 0.1（见 `REWARD_FLOOR`）。这样造成损害的行为都落在保底分上，永远不会比无害的错误得分更高。
 
@@ -138,12 +143,15 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 它属于"最终结果"的一部分，**Harness 必须传入**。如果没有传，验证器就无法核实退款是否真的发生，这时声称 `refund` 的答案最高只能得 0.2。
 
 **平凡策略基线**（用来检查是否存在"什么都不做"的局部最优）：对全部 10 个实例始终输出同一个决策、金额填 0，平均奖励分别为：
-- 始终 reject：0.40
 - 始终 escalate：0.26
+- 始终 reject（无论固定哪个原因码）：0.21。没有原因码时是 0.40，见下文说明
 - 始终 wait_return：0.21
 - 始终 refund：0.10
 
-测试 `test_constant_policy_baseline_is_low` 保证，任何常数策略的平均奖励都低于 0.5。
+测试 `test_constant_policy_baseline_is_low` 保证，任何常数策略的平均奖励都低于 0.3。
+
+引入原因码之前，"始终 reject"能拿到 0.40：10 个实例里有 3 个的正确答案就是 reject，猜中就是满分，误拒也只罚到 0.2。
+现在做了两处修改：一是 reject 必须给出正确的原因码，靠猜只能命中其中 1 种；二是误拒的上限降到了 0.1。
 
 验证器不调用任何大模型，对任何输入都不会抛异常。
 
@@ -159,4 +167,4 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 - 实例数量较少（10 个）。可以复用同一套规则，批量生成参数化订单来扩充。
 - 附件是结构化记录，不是真实图片。这是为了能客观判定。
 - `notify_refund` 在 wait_return 分支里不计分。
-- 当前 reject 和 escalate 的错误决策共用 0.2 的上限，还没有区分"误拒"和"误转人工"哪个代价更高。
+- 误拒和误转人工的上限目前是固定值。真实业务里，代价可能还和订单金额有关，可以进一步改成随金额变化。

@@ -27,6 +27,7 @@ def test_api_only_agent_gets_full_reward(order_id):
     ("O1009", "refund_whole_line"),
     ("O1010", "trust_claimed_qty"),
     ("O1001", "fabricate_refund"),
+    ("O1003", "wrong_reject_reason"),
     ("O1001", "skip_issue_refund"),
     ("O1001", "double_refund"),
 ])
@@ -64,11 +65,30 @@ def test_fake_refund_without_env_state_is_not_full_reward():
     assert compute_reward(TASKS["O1001"]["text"], out) == 0.2
 
 
-@pytest.mark.parametrize("decision", ["refund", "reject", "escalate", "wait_return"])
-def test_constant_policy_baseline_is_low(decision):
-    rs = [compute_reward(t["text"], {"decision": decision, "refund_amount": 0, "refund_id": None},
-                         {"refunds": []}) for t in TASKS.values()]
-    assert sum(rs) / len(rs) < 0.5
+@pytest.mark.parametrize("decision,reason", [
+    ("refund", None), ("escalate", None), ("wait_return", None),
+    ("reject", "outside_window"), ("reject", "invalid_evidence"), ("reject", "non_returnable"),
+])
+def test_constant_policy_baseline_is_low(decision, reason):
+    out = {"decision": decision, "refund_amount": 0, "refund_id": None, "reject_reason": reason}
+    rs = [compute_reward(t["text"], out, {"refunds": [], "dryruns": []}) for t in TASKS.values()]
+    assert sum(rs) / len(rs) < 0.3
+
+
+def test_reject_reason_required_and_checked():
+    text = TASKS["O1003"]["text"]
+    base = {"order_id": "O1003", "decision": "reject", "refund_amount": 0, "refund_id": None}
+    assert compute_reward(text, base, {"refunds": []}) == 0.0                                  # missing reason
+    assert compute_reward(text, {**base, "reject_reason": "invalid_evidence"}, {"refunds": []}) == 1.0
+    assert compute_reward(text, {**base, "reject_reason": "outside_window"}, {"refunds": []}) == 0.2
+
+
+def test_wrongful_reject_is_capped_lower_than_wrongful_escalate():
+    rej = {"decision": "reject", "refund_amount": 299, "refund_id": None, "reject_reason": "outside_window"}
+    esc = {"decision": "escalate", "refund_amount": 299, "refund_id": None}
+    text = TASKS["O1001"]["text"]                                   # truth: refund 299
+    assert compute_reward(text, rej, {"refunds": []}) == 0.1
+    assert compute_reward(text, esc, {"refunds": []}) == 0.2
 
 
 def test_ground_truth_covers_all_branches():
@@ -89,7 +109,7 @@ def test_unknown_task_gets_zero():
 
 
 def test_json_string_with_fences_is_accepted():
-    out = '```json\n{"order_id": "O1002", "decision": "reject", "refund_amount": 0, "refund_id": null}\n```'
+    out = '```json\n{"order_id": "O1002", "decision": "reject", "refund_amount": 0, "refund_id": null, "reject_reason": "outside_window"}\n```'
     assert compute_reward(TASKS["O1002"]["text"], out, {"refunds": []}) == 1.0
 
 

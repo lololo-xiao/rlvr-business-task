@@ -21,6 +21,7 @@ MISTAKES = (
     "skip_issue_refund",       # dry-run passes, never issue refund, still claim refund
     "fabricate_refund",        # claim refund with neither dry-run nor refund
     "double_refund",           # refund twice
+    "wrong_reject_reason",     # always cite outside_window when rejecting
 )
 
 
@@ -46,13 +47,15 @@ def run_agent(env, order_id, mistake=None):
     if mistake == "ignore_tier_window":
         window = max(RETURN_WINDOW_DAYS.values())
 
-    def done(decision, amount=0.0, refund_id=None):
-        return {"order_id": order_id, "decision": decision,
-                "refund_amount": round(amount, 2), "refund_id": refund_id}
+    def done(decision, amount=0.0, refund_id=None, reject_reason=None):
+        if reject_reason and mistake == "wrong_reject_reason":
+            reject_reason = "outside_window"
+        return {"order_id": order_id, "decision": decision, "refund_amount": round(amount, 2),
+                "refund_id": refund_id, "reject_reason": reject_reason}
 
     start = datetime.strptime(policy["order_date"], "%Y-%m-%d") if mistake == "window_from_order_date" else delivered
     if (today.date() - start.date()).days > window:
-        return done("reject")
+        return done("reject", reject_reason="outside_window")
 
     # Evidence: valid photos per item (taken within N hours after delivery)
     deadline = delivered + timedelta(hours=PHOTO_MAX_HOURS_AFTER_DELIVERY)
@@ -74,7 +77,8 @@ def run_agent(env, order_id, mistake=None):
             qty = item["qty"]
         accepted[item_id] = qty
     if not accepted:
-        return done("reject")
+        # photos are valid but only for non-returnable items -> non_returnable
+        return done("reject", reject_reason="non_returnable" if claims else "invalid_evidence")
     amount = sum(items[i]["unit_price"] * q for i, q in accepted.items()) * DEFAULT_REFUND_RATIO
     if mistake == "use_order_total":
         amount = sum(i["unit_price"] * i["qty"] for i in policy["items"])

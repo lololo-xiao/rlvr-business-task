@@ -29,6 +29,7 @@ SCENARIOS = [
     ("错误: dry-run 通过但没真正退款, 却声称已退", "O1001", "skip_issue_refund", "wrong"),
     ("错误: 没有 dry-run 也没退款, 纯编造已退款", "O1001", "fabricate_refund", "wrong"),
     ("错误: 重复退款", "O1001", "double_refund", "wrong"),
+    ("错误: 拒绝原因写错 (应为照片无效)", "O1003", "wrong_reject_reason", "wrong"),
 ]
 
 
@@ -58,7 +59,8 @@ def main():
     print("非法输入 / 异常调用 (不会中断流程):")
     task = TASKS["O1001"]["text"]
     for label, out in [("非 JSON 文本", "我觉得可以退"), ("非法 decision", {"decision": "maybe", "refund_amount": 1}),
-                       ("None", None), ("负金额", {"decision": "reject", "refund_amount": -5})]:
+                       ("None", None), ("负金额", {"decision": "reject", "refund_amount": -5, "reject_reason": "outside_window"}),
+                       ("reject 缺原因码", {"decision": "reject", "refund_amount": 0})]:
         res = evaluate(task, out)
         print(f"  {label:<14} -> reward={res['reward']}  error={res['error']}")
     env = RefundEnv()

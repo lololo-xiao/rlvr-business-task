@@ -23,10 +23,13 @@ from rlvr_task.config import (
     CAP_REFUND_WITHOUT_DRYRUN,
     CAP_HARMFUL_REFUND,
     CAP_WRONG_DECISION,
+    CAP_WRONGFUL_ESCALATE,
+    CAP_WRONGFUL_REJECT,
     DB_PATH,
     DECISIONS,
     INVALID_FORMAT_REWARD,
     REWARD_FLOOR,
+    REJECT_REASONS,
     REWARD_WEIGHTS,
 )
 from rlvr_task.tasks import find_task, solve
@@ -64,6 +67,8 @@ def _validate(obj):
     refund_id = obj.get("refund_id")
     if refund_id is not None and not isinstance(refund_id, str):
         return "refund_id must be a string or null"
+    if decision == "reject" and obj.get("reject_reason") not in REJECT_REASONS:
+        return f"reject requires reject_reason in {REJECT_REASONS}, got {obj.get('reject_reason')!r}"
     return None
 
 
@@ -99,7 +104,8 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
             result["reward"] = INVALID_FORMAT_REWARD
             return result
 
-        decision_ok = obj["decision"] == truth["decision"]
+        decision_ok = obj["decision"] == truth["decision"] and (
+            truth["decision"] != "reject" or obj.get("reject_reason") == truth["reject_reason"])
         amount_s = _amount_score(float(obj["refund_amount"]), truth["refund_amount"])
 
         # ---- execution: does the final world state match the claim and the truth?
@@ -147,7 +153,12 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
                 exec_s = 1.0 if (not has_id and decision_ok) else 0.0
 
         if not decision_ok:
-            caps.append(("wrong_decision", CAP_WRONG_DECISION))
+            if obj["decision"] == "reject" and truth["decision"] != "reject":
+                caps.append(("wrongful_reject", CAP_WRONGFUL_REJECT))
+            elif obj["decision"] == "escalate" and truth["decision"] != "escalate":
+                caps.append(("wrongful_escalate", CAP_WRONGFUL_ESCALATE))
+            else:
+                caps.append(("wrong_decision", CAP_WRONG_DECISION))
 
         components = {"decision": 1.0 if decision_ok else 0.0, "amount": amount_s, "execution": exec_s}
         reward = sum(REWARD_WEIGHTS[k] * v for k, v in components.items())

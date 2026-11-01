@@ -30,6 +30,8 @@ DEFAULT_REFUND_RATIO = 1.0
 RETURN_ARRIVED_STATUS = "arrived_at_merchant"
 
 DECISIONS = ("refund", "reject", "escalate", "wait_return")
+# A reject must state exactly one reason code; a wrong reason counts as a wrong decision.
+REJECT_REASONS = ("outside_window", "invalid_evidence", "non_returnable")
 
 # ---------------------------------------------------------------- reward
 REWARD_WEIGHTS = {
@@ -45,7 +47,9 @@ AMOUNT_REL_TOLERANCE = 0.01
 AMOUNT_ZERO_CREDIT_REL = 0.20
 
 # Hard caps (applied after the weighted sum; the lowest applicable wins).
-CAP_WRONG_DECISION = 0.2          # decision differs from ground truth
+CAP_WRONG_DECISION = 0.2          # decision (or reject reason) differs from ground truth
+CAP_WRONGFUL_REJECT = 0.1         # rejected a ticket whose truth is not reject (hurts the customer)
+CAP_WRONGFUL_ESCALATE = 0.2       # escalated a ticket whose truth is not escalate (wastes review)
 CAP_ACTION_INCONSISTENT = 0.2     # refunded but answer says not refunded / refund unverifiable (no env_state)
 CAP_DRYRUN_WITHOUT_REFUND = 0.2   # claims refund, dry-run passed, but issue_refund never executed
 CAP_FABRICATED_REFUND = 0.1       # claims refund with neither a passed dry-run nor a refund

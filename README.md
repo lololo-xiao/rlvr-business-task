@@ -20,8 +20,8 @@ rlvr_task/
   verifier/reward.py   # compute_reward / evaluate：奖励计算
 examples/
   scripted_agent.py    # 只用 API 解题的脚本 Agent（可注入特定错误）
-  run_examples.py      # 调用样例：10 个正确场景 + 8 个错误场景 + 非法输入
-tests/test_task.py     # pytest（47 个用例）
+  run_examples.py      # 调用样例：10 个正确场景 + 9 个错误场景 + 非法输入
+tests/test_task.py     # pytest（52 个用例）
 docs/DESIGN.md         # 设计说明
 Dockerfile, requirements.txt
 ```
@@ -81,27 +81,28 @@ reward = compute_reward(task["text"], final_answer, env_state=env.export_state()
 2. 预期输出：10 个正确场景都是 `REWARD: 1.0`。错误场景的奖励如下：
    | 错误场景 | 奖励 | 原因 |
    | --- | --- | --- |
-   | 从下单日起算时限 → 误拒 | 0.1 | 三项全错，取保底 0.1 |
+   | 从下单日起算时限 → 误拒 | 0.1 | 误拒，上限 0.1 |
    | 忽略会员等级 → 误退款 | 0.1 | 资金损失，上限 0.1 |
-   | 用订单总额判阈值 → 误转人工 | 0.2 | 决策错误，上限 0.2 |
+   | 用订单总额判阈值 → 误转人工 | 0.2 | 误转人工，上限 0.2 |
    | 按整行数量退款（应退 2×60，实退 4×60） | 0.5 | 决策对，金额和执行项不得分（部分分） |
    | 照片数少于声称的损坏数，仍按声称数量退款 | 0.5 | 决策对，金额和执行项不得分 |
    | dry-run 通过但没真正退款，却声称已退 | 0.2 | 上限 0.2 |
    | 既没 dry-run 也没退款，纯编造已退款 | 0.1 | 上限 0.1 |
    | 重复退款 | 0.1 | 上限 0.1 |
+   | 拒绝原因码写错（应为 invalid_evidence） | 0.2 | 决策错误，上限 0.2 |
 
-   此外还会演示两点：无法解析的输出得 0 分（这是唯一会得 0 的情况）；非法 API 调用返回错误字典，不会中断流程。
-3. `docker run --rm rlvr-refund python -m pytest -q`，预期 47 passed
+   此外还会演示两点：无法解析的输出得 0 分，reject 缺少原因码也算格式错误，这是唯一会得 0 的情况；非法 API 调用返回错误字典，不会中断流程。
+3. `docker run --rm rlvr-refund python -m pytest -q`，预期 52 passed
 
 ## 调用样例输出（节选）
 
 ```
 [正确: 可退款 (签收日起算, 只退损坏商品)] task=refund-O1001
-  agent answer : {"order_id": "O1001", "decision": "refund", "refund_amount": 299.0, "refund_id": "RF-O1001-002"}
+  agent answer : {"order_id": "O1001", "decision": "refund", "refund_amount": 299.0, "refund_id": "RF-O1001-002", "reject_reason": null}
   components   : {'decision': 1.0, 'amount': 1.0, 'execution': 1.0}  caps=[]
   REWARD       : 1.0
 [错误: 忽略等级用最长时限 -> 误退款] task=refund-O1002
-  agent answer : {"order_id": "O1002", "decision": "refund", "refund_amount": 199.0, "refund_id": "RF-O1002-002"}
+  agent answer : {"order_id": "O1002", "decision": "refund", "refund_amount": 199.0, "refund_id": "RF-O1002-002", "reject_reason": null}
   components   : {'decision': 0.0, 'amount': 0.0, 'execution': 0.0}  caps=['harmful_refund', 'wrong_decision']
   REWARD       : 0.1
 ```

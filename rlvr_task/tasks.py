@@ -22,7 +22,9 @@ TASK_TEMPLATE = (
     "【售后工单】订单号 {order_id}：我现在收到的快递是坏的，照片已经上传了，可以退货吗？"
     "请按平台售后政策处理本工单，并以 JSON 输出最终结果："
     '{{"order_id": str, "decision": "refund|reject|escalate|wait_return", '
-    '"refund_amount": number, "refund_id": str|null}}'
+    '"refund_amount": number, "refund_id": str|null, '
+    '"reject_reason": "outside_window|invalid_evidence|non_returnable"|null}}'
+    "（decision 为 reject 时必须给出 reject_reason，否则为 null）"
 )
 
 TASKS = {
@@ -46,6 +48,14 @@ def find_task(task_text):
 
 def _parse_dt(s):
     return datetime.strptime(s, "%Y-%m-%d %H:%M")
+
+
+def valid_photo_items(items, attachments, delivered):
+    """Item ids of this order that have at least one photo taken within the window."""
+    ids = {it["item_id"] for it in items}
+    deadline = delivered + timedelta(hours=PHOTO_MAX_HOURS_AFTER_DELIVERY)
+    return {a["item_id"] for a in attachments
+            if a["item_id"] in ids and delivered <= _parse_dt(a["taken_at"]) <= deadline}
 
 
 def eligible_items(items, attachments, delivered):
@@ -80,6 +90,8 @@ def solve(order_id, db_path=DB_PATH):
     Rule precedence:
       1. outside tier return window (from delivery date)            -> reject
       2. no returnable item with a valid photo (<=24h after delivery) -> reject
+         (non_returnable if valid photos exist but only for non-returnable items,
+          otherwise invalid_evidence)
       3. refund amount > tier review threshold                         -> escalate
       4. return parcel not at merchant                                 -> wait_return
       5. otherwise                                                     -> refund
@@ -98,22 +110,26 @@ def solve(order_id, db_path=DB_PATH):
     finally:
         conn.close()
 
-    def answer(decision, amount=0.0, reason="", item_ids=()):
+    def answer(decision, amount=0.0, reason="", item_ids=(), reject_reason=None):
         return {"order_id": order_id, "decision": decision, "refund_amount": round(amount, 2),
-                "reason": reason, "item_ids": sorted(item_ids)}
+                "reject_reason": reject_reason, "reason": reason, "item_ids": sorted(item_ids)}
 
     if cust is None or delivery is None or not atts:
-        return answer("reject", reason="missing order/delivery/evidence")
+        return answer("reject", reason="missing order/delivery/evidence", reject_reason="invalid_evidence")
 
     tier = cust["tier"]
     delivered = _parse_dt(delivery["delivered_at"])
     today = datetime.strptime(CURRENT_DATE, "%Y-%m-%d")
     if (today.date() - delivered.date()).days > RETURN_WINDOW_DAYS[tier]:
-        return answer("reject", reason="outside return window")
+        return answer("reject", reason="outside return window", reject_reason="outside_window")
 
     accepted = eligible_items(items, atts, delivered)
     if not accepted:
-        return answer("reject", reason="no returnable item with valid photo evidence")
+        # non_returnable: every item with valid photo evidence is non-returnable;
+        # invalid_evidence: no item has a valid photo at all.
+        if valid_photo_items(items, atts, delivered):
+            return answer("reject", reason="damaged items are non-returnable", reject_reason="non_returnable")
+        return answer("reject", reason="no valid photo evidence", reject_reason="invalid_evidence")
     price = {it["item_id"]: it["unit_price"] for it in items}
     amount = sum(price[i] * q for i, q in accepted.items()) * DEFAULT_REFUND_RATIO
 
