@@ -34,7 +34,7 @@ TOOL_DESCRIPTIONS = {
     "need_permission": "need_permission(customer_id, amount) -> 该退款金额对该顾客是否需要人工审核。",
     "get_address": "get_address(order_id) -> 顾客收货地址与商家退货地址。",
     "notify_refund": "notify_refund(order_id, message) -> 通知顾客（如提醒按要求寄回商品）。",
-    "dryrun_refund": "dryrun_refund(order_id, item_id, amount, policy_id) -> 退款安全预检，通过则返回一次性 dryrun_token。",
+    "dryrun_refund": "dryrun_refund(order_id, item_id, amount, policy_id) -> 退款安全预检（须已调用 get_policy 和 check_attachment；只做安全检查，不判断是否符合退货政策），通过则返回一次性 dryrun_token。",
     "issue_refund": "issue_refund(order_id, dryrun_token) -> 正式发起退款，返回 refund_id。必须使用 dryrun_refund 返回的 token。",
 }
 
@@ -55,6 +55,7 @@ class RefundEnv:
         src.close()
         self._conn.row_factory = sqlite3.Row
         self._fetched_policies = {}   # order_id -> policy_id fetched this episode
+        self._checked_attachments = set()  # order_ids whose attachments were inspected
         self._dryrun_tokens = {}      # token -> (order_id, item_id, amount)
         self._counter = 0
 
@@ -133,6 +134,7 @@ class RefundEnv:
         atts = self._rows(
             "SELECT attachment_id, item_id, file_name, damage_type, damaged_qty, taken_at, uploaded_at "
             "FROM attachments WHERE order_id=?", (order_id,))
+        self._checked_attachments.add(order_id)
         return {"ok": True, "order_id": order_id, "attachments": atts}
 
     def check_delivery(self, order_id):
@@ -181,7 +183,8 @@ class RefundEnv:
         return {"ok": True, "order_id": order_id, "notified": True}
 
     def dryrun_refund(self, order_id, item_id, amount, policy_id):
-        """Safety pre-check only (policy fetched, item belongs to order, amount bound).
+        """Safety pre-check only (policy fetched, attachments checked, item belongs
+        to order, amount bound).
 
         It deliberately does NOT judge business eligibility (window, evidence,
         review threshold) - that reasoning is the agent's job.
@@ -193,6 +196,8 @@ class RefundEnv:
             return _err("policy not fetched: call get_policy(order_id) before refunding")
         if policy_id != self._fetched_policies[order_id]:
             return _err(f"policy_id mismatch for {order_id}")
+        if order_id not in self._checked_attachments:
+            return _err("attachments not checked: call check_attachment(order_id) before refunding")
         items = self._rows("SELECT unit_price, qty FROM order_items WHERE order_id=? AND item_id=?",
                            (order_id, item_id))
         if not items:

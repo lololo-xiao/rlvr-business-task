@@ -7,7 +7,7 @@ Unified entry point for training harnesses:
 
 It judges only the final result (the answer plus the final environment
 state it claims to have produced). It never inspects the call trajectory
-and never calls an LLM. It never raises: any bad input yields reward 0.
+and never calls an LLM. It never raises: unparsable output yields 0, any valid answer at least REWARD_FLOOR.
 """
 import json
 import math
@@ -19,10 +19,11 @@ from rlvr_task.config import (
     CAP_ACTION_INCONSISTENT,
     CAP_DUPLICATE_REFUND,
     CAP_HARMFUL_REFUND,
-    CAP_INVALID_FORMAT,
     CAP_WRONG_DECISION,
     DB_PATH,
     DECISIONS,
+    INVALID_FORMAT_REWARD,
+    REWARD_FLOOR,
     REWARD_WEIGHTS,
 )
 from rlvr_task.tasks import find_task, solve
@@ -91,8 +92,8 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
             err = f"order_id mismatch: {obj.get('order_id')!r}"
         if err is not None:
             result["error"] = err
-            result["caps"].append(("invalid_format", CAP_INVALID_FORMAT))
-            result["reward"] = CAP_INVALID_FORMAT
+            result["caps"].append(("invalid_format", INVALID_FORMAT_REWARD))
+            result["reward"] = INVALID_FORMAT_REWARD
             return result
 
         decision_ok = obj["decision"] == truth["decision"]
@@ -120,15 +121,17 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
             else:
                 exec_s = 1.0 if not refunded else 0.0
         else:
-            # No env state supplied: a refund claim cannot be verified, so it earns
-            # no execution credit (prevents rewarding a hallucinated refund_id).
+            # No env state supplied: a refund claim cannot be verified, so it is
+            # treated like an unexecuted refund (prevents rewarding a hallucinated
+            # refund_id). Harnesses must pass env.export_state().
             has_id = bool(obj.get("refund_id"))
-            consistent = has_id == (obj["decision"] == "refund")
-            if not consistent:
-                caps.append(("action_inconsistent", CAP_ACTION_INCONSISTENT))
             if obj["decision"] == "refund":
-                caps.append(("refund_unverifiable_without_env_state", 1.0))
-            exec_s = 1.0 if consistent and decision_ok and obj["decision"] != "refund" else 0.0
+                caps.append(("refund_unverifiable_without_env_state", CAP_ACTION_INCONSISTENT))
+                exec_s = 0.0
+            else:
+                if has_id:
+                    caps.append(("action_inconsistent", CAP_ACTION_INCONSISTENT))
+                exec_s = 1.0 if (not has_id and decision_ok) else 0.0
 
         if not decision_ok:
             caps.append(("wrong_decision", CAP_WRONG_DECISION))
@@ -137,7 +140,8 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
         reward = sum(REWARD_WEIGHTS[k] * v for k, v in components.items())
         for _, cap in caps:
             reward = min(reward, cap)
-        result.update(reward=round(max(0.0, min(1.0, reward)), 4), components=components, caps=caps)
+        reward = max(REWARD_FLOOR, min(1.0, reward))
+        result.update(reward=round(reward, 4), components=components, caps=caps)
         return result
     except Exception as exc:  # the verifier must never crash the trainer
         result["error"] = f"verifier internal error: {type(exc).__name__}: {exc}"

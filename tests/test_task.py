@@ -80,6 +80,8 @@ def test_env_enforces_policy_and_dryrun_before_refund():
     assert not env.dryrun_refund("O1001", "I1001A", 299, "POL-O1001")["ok"]
     assert not env.issue_refund("O1001", "DRY-X")["ok"]
     pol = env.get_policy("O1001")
+    assert not env.dryrun_refund("O1001", "I1001A", 299, pol["policy_id"])["ok"]  # attachments not checked
+    env.check_attachment("O1001")
     assert not env.dryrun_refund("O1001", "I1001A", 9999, pol["policy_id"])["ok"]
     tok = env.dryrun_refund("O1001", "I1001A", 299, pol["policy_id"])["dryrun_token"]
     assert env.issue_refund("O1001", tok)["ok"]

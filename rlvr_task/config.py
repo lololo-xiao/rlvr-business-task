@@ -14,13 +14,13 @@ CURRENT_DATE = "2026-11-01"
 
 # ---------------------------------------------------------------- business rules
 # Return window in days, counted from the DELIVERY (sign-for) date, by tier.
-RETURN_WINDOW_DAYS = {"bronze": 7, "silver": 15, "gold": 30}
+RETURN_WINDOW_DAYS = {"bronze": 7, "silver": 10, "gold": 14}
 
 # Damage photo must be taken within this many hours after delivery.
 PHOTO_MAX_HOURS_AFTER_DELIVERY = 24
 
 # Refund amount above this (per tier) must be escalated to manual review.
-MANUAL_REVIEW_THRESHOLD = {"bronze": 500.0, "silver": 500.0, "gold": 1000.0}
+MANUAL_REVIEW_THRESHOLD = {"bronze": 200.0, "silver": 500.0, "gold": 1000.0}
 
 # Default refund ratio; shipping is fully covered by the merchant.
 # Any change of ratio or extra shipping charge requires escalation.
@@ -46,7 +46,12 @@ AMOUNT_ZERO_CREDIT_REL = 0.20
 
 # Hard caps (applied after the weighted sum; the lowest applicable wins).
 CAP_WRONG_DECISION = 0.2          # decision differs from ground truth
-CAP_ACTION_INCONSISTENT = 0.2     # says "refund" but no refund executed, or vice versa
-CAP_DUPLICATE_REFUND = 0.0        # more than one refund for the order
-CAP_HARMFUL_REFUND = 0.0          # refund executed when ground truth is not refund
-CAP_INVALID_FORMAT = 0.0          # unparsable / schema-invalid output
+CAP_ACTION_INCONSISTENT = 0.2     # says "refund" but no refund executed (or unverifiable), or vice versa
+CAP_DUPLICATE_REFUND = 0.1        # more than one refund for the order
+CAP_HARMFUL_REFUND = 0.1          # refund executed when ground truth is not refund
+
+# Any parsable, schema-valid answer gets at least this reward, so harmful
+# actions sit at the floor and never score above a harmless mistake.
+REWARD_FLOOR = 0.1
+# Only unparsable / schema-invalid output scores below the floor.
+INVALID_FORMAT_REWARD = 0.0

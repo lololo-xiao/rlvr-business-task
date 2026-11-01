@@ -79,8 +79,8 @@ ORDER_ITEMS = [
 ]
 
 DELIVERIES = [
-    # O1001: 20 days since order but only 12 since delivery -> within silver 15d
-    ("O1001", "顺丰", "SF100001", "2026-10-13 09:00", "2026-10-20 10:00", "SFR90001", "arrived_at_merchant"),
+    # O1001: 20 days since order but only 8 since delivery -> within silver 10d
+    ("O1001", "顺丰", "SF100001", "2026-10-13 09:00", "2026-10-24 10:00", "SFR90001", "arrived_at_merchant"),
     # O1002: delivered 9 days ago, bronze window 7d -> expired
     ("O1002", "中通", "ZT100002", "2026-10-21 09:00", "2026-10-23 15:00", "ZTR90002", "arrived_at_merchant"),
     ("O1003", "京东", "JD100003", "2026-10-26 09:00", "2026-10-28 09:00", "JDR90003", "arrived_at_merchant"),
@@ -88,9 +88,9 @@ DELIVERIES = [
     # O1005: return parcel still in transit
     ("O1005", "圆通", "YT100005", "2026-10-25 09:00", "2026-10-28 18:00", "YTR90005", "in_transit"),
     ("O1006", "京东", "JD100006", "2026-10-27 09:00", "2026-10-29 10:00", "JDR90006", "arrived_at_merchant"),
-    # O1007: gold, delivered 20 days ago -> still within gold 30d
-    ("O1007", "顺丰", "SF100007", "2026-10-06 09:00", "2026-10-12 10:00", "SFR90007", "arrived_at_merchant"),
-    # O1008: bronze threshold 500 < 520 -> escalate
+    # O1007: gold, delivered 12 days ago -> within gold 14d, but outside silver 10d / order-date count
+    ("O1007", "顺丰", "SF100007", "2026-10-15 09:00", "2026-10-20 10:00", "SFR90007", "arrived_at_merchant"),
+    # O1008: bronze threshold 200 < 520 -> escalate (gold rule would refund)
     ("O1008", "中通", "ZT100008", "2026-10-28 09:00", "2026-10-29 12:00", "ZTR90008", "arrived_at_merchant"),
     # O1009: 2 of 4 glasses broken -> refund 2 x 60, not the whole line / order
     ("O1009", "京东", "JD100009", "2026-10-28 09:00", "2026-10-30 09:00", "JDR90009", "arrived_at_merchant"),
@@ -98,14 +98,14 @@ DELIVERIES = [
 ]
 
 ATTACHMENTS = [
-    ("A1", "O1001", "I1001A", "earbuds_broken.jpg", "外壳破裂", 1, "2026-10-20 20:30", "2026-10-21 08:00"),
+    ("A1", "O1001", "I1001A", "earbuds_broken.jpg", "外壳破裂", 1, "2026-10-24 20:30", "2026-10-25 08:00"),
     ("A2", "O1002", "I1002A", "brush.jpg", "无法开机", 1, "2026-10-23 18:00", "2026-10-30 09:00"),
     # O1003: photo taken 54h after delivery -> invalid evidence
     ("A3", "O1003", "I1003A", "lamp.jpg", "灯罩碎裂", 1, "2026-10-30 15:00", "2026-10-30 16:00"),
     ("A4", "O1004", "I1004A", "keyboard.jpg", "按键脱落", 1, "2026-10-27 19:00", "2026-10-27 19:10"),
     ("A5", "O1005", "I1005A", "coffee.jpg", "水箱开裂", 1, "2026-10-29 08:00", "2026-10-29 08:30"),
     ("A6", "O1006", "I1006A", "laptop.jpg", "屏幕划痕", 1, "2026-10-29 12:00", "2026-10-29 12:05"),
-    ("A7", "O1007", "I1007A", "fryer.jpg", "炸篮变形", 1, "2026-10-12 15:00", "2026-10-13 09:00"),
+    ("A7", "O1007", "I1007A", "fryer.jpg", "炸篮变形", 1, "2026-10-20 15:00", "2026-10-21 09:00"),
     ("A8", "O1008", "I1008A", "projector.jpg", "镜头碎裂", 1, "2026-10-29 20:00", "2026-10-29 20:10"),
     ("A9", "O1009", "I1009A", "glasses.jpg", "两只碎裂", 2, "2026-10-30 12:00", "2026-10-31 10:00"),
 ]
