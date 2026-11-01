@@ -1,0 +1,52 @@
+"""Central configuration: business rules, reward weights and thresholds.
+
+All rule constants live here so they can be tuned without touching
+environment or verifier code.
+"""
+from pathlib import Path
+
+# ---------------------------------------------------------------- paths
+PACKAGE_DIR = Path(__file__).resolve().parent
+DB_PATH = PACKAGE_DIR / "data" / "business.db"
+
+# Fixed "today" of the simulated world, so every run is reproducible.
+CURRENT_DATE = "2026-11-01"
+
+# ---------------------------------------------------------------- business rules
+# Return window in days, counted from the DELIVERY (sign-for) date, by tier.
+RETURN_WINDOW_DAYS = {"bronze": 7, "silver": 15, "gold": 30}
+
+# Damage photo must be taken within this many hours after delivery.
+PHOTO_MAX_HOURS_AFTER_DELIVERY = 24
+
+# Refund amount above this (per tier) must be escalated to manual review.
+MANUAL_REVIEW_THRESHOLD = {"bronze": 500.0, "silver": 500.0, "gold": 1000.0}
+
+# Default refund ratio; shipping is fully covered by the merchant.
+# Any change of ratio or extra shipping charge requires escalation.
+DEFAULT_REFUND_RATIO = 1.0
+
+# Return parcel status meaning "arrived at merchant".
+RETURN_ARRIVED_STATUS = "arrived_at_merchant"
+
+DECISIONS = ("refund", "reject", "escalate", "wait_return")
+
+# ---------------------------------------------------------------- reward
+REWARD_WEIGHTS = {
+    "decision": 0.5,   # final decision matches ground truth
+    "amount": 0.3,     # refund_amount matches ground truth
+    "execution": 0.2,  # environment side effects consistent with ground truth
+}
+
+# Amount scoring: full credit within tolerance, linear decay to 0 at
+# AMOUNT_ZERO_CREDIT_REL relative error.
+AMOUNT_ABS_TOLERANCE = 0.01
+AMOUNT_REL_TOLERANCE = 0.01
+AMOUNT_ZERO_CREDIT_REL = 0.20
+
+# Hard caps (applied after the weighted sum; the lowest applicable wins).
+CAP_WRONG_DECISION = 0.2          # decision differs from ground truth
+CAP_ACTION_INCONSISTENT = 0.2     # says "refund" but no refund executed, or vice versa
+CAP_DUPLICATE_REFUND = 0.0        # more than one refund for the order
+CAP_HARMFUL_REFUND = 0.0          # refund executed when ground truth is not refund
+CAP_INVALID_FORMAT = 0.0          # unparsable / schema-invalid output
