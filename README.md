@@ -4,7 +4,7 @@
 
 一个可直接接入 RL 训练 Harness 的任务单元，包含三部分：
 - **API 交互环境**（`RefundEnv`）：Agent 只能通过 Python 类方法查询 SQLite 业务数据、执行退款；
-- **任务实例**：6 个"收到的商品坏了，能退吗？"售后工单；
+- **任务实例**：9 个"收到的商品坏了，能退吗？"售后工单；
 - **验证引擎**：`compute_reward()` 根据最终结果输出 0～1 的客观奖励，不使用大模型。
 
 完整的任务设计、接口定义、典型执行路径和奖励逻辑见 **[docs/DESIGN.md](docs/DESIGN.md)**。
@@ -20,8 +20,8 @@ rlvr_task/
   verifier/reward.py   # compute_reward / evaluate：奖励计算
 examples/
   scripted_agent.py    # 只用 API 解题的脚本 Agent（可注入特定错误）
-  run_examples.py      # 调用样例：6 个正确场景 + 5 个错误场景 + 非法输入
-tests/test_task.py     # pytest（32 个用例）
+  run_examples.py      # 调用样例：9 个正确场景 + 6 个错误场景 + 非法输入
+tests/test_task.py     # pytest（41 个用例）
 docs/DESIGN.md         # 设计说明
 Dockerfile, requirements.txt
 ```
@@ -72,20 +72,24 @@ obs = env.call("get_policy", order_id="O1001")
 reward = compute_reward(task["text"], final_answer, env_state=env.export_state())
 ```
 
+> Harness 应始终传入 `env_state=env.export_state()`。不传时，验证器无法核实退款是否真实发生，
+> 因此声称 `refund` 的答案拿不到执行分（最高 0.8），以防奖励幻觉出来的 `refund_id`。
+
 ## 复现与验收步骤
 
 1. `docker build -t rlvr-refund . && docker run --rm rlvr-refund`
-2. 预期输出：6 个正确场景 `REWARD: 1.0`；错误场景的奖励如下：
+2. 预期输出：9 个正确场景 `REWARD: 1.0`；错误场景的奖励如下：
    | 错误场景 | 奖励 | 原因 |
    | --- | --- | --- |
    | 从下单日起算时限 → 误拒 | 0.0 | 决策、金额、执行三项全错 |
    | 忽略会员等级 → 误退款 | 0.0 | 资金损失，上限 0 |
    | 用订单总额判阈值 → 误转人工 | 0.2 | 决策错误，上限 0.2 |
+   | 按整行数量退款（应退 2×60，实退 4×60） | 0.5 | 决策对，金额和执行项不得分（部分分） |
    | 声称已退款但未执行 | 0.2 | 行动与回答不一致，上限 0.2 |
    | 重复退款 | 0.0 | 重复退款，上限 0 |
    
    此外还会演示：非法输出得 0 分；非法 API 调用返回错误字典，不会中断流程。
-3. `docker run --rm rlvr-refund python -m pytest -q` → 32 passed
+3. `docker run --rm rlvr-refund python -m pytest -q` → 41 passed
 
 ## 调用样例输出（节选）
 

@@ -24,12 +24,27 @@ def test_api_only_agent_gets_full_reward(order_id):
     ("O1001", "window_from_order_date"),
     ("O1002", "ignore_tier_window"),
     ("O1005", "use_order_total"),
+    ("O1009", "refund_whole_line"),
     ("O1001", "skip_issue_refund"),
     ("O1001", "double_refund"),
 ])
 def test_each_hidden_constraint_changes_reward(order_id, mistake):
     answer, state = _play(order_id, mistake)
-    assert compute_reward(TASKS[order_id]["text"], answer, state) <= 0.2
+    assert compute_reward(TASKS[order_id]["text"], answer, state) <= 0.5
+
+
+def test_fake_refund_without_env_state_is_not_full_reward():
+    out = {"order_id": "O1001", "decision": "refund", "refund_amount": 299, "refund_id": "RF-FAKE"}
+    assert compute_reward(TASKS["O1001"]["text"], out) < 1.0
+    # with env state, an unexecuted refund claim is capped
+    assert compute_reward(TASKS["O1001"]["text"], out, {"refunds": []}) <= 0.2
+
+
+@pytest.mark.parametrize("decision", ["refund", "reject", "escalate", "wait_return"])
+def test_constant_policy_baseline_is_low(decision):
+    rs = [compute_reward(t["text"], {"decision": decision, "refund_amount": 0, "refund_id": None},
+                         {"refunds": []}) for t in TASKS.values()]
+    assert sum(rs) / len(rs) < 0.5
 
 
 def test_ground_truth_covers_all_branches():

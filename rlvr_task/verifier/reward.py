@@ -120,12 +120,15 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
             else:
                 exec_s = 1.0 if not refunded else 0.0
         else:
-            # No env state supplied: only check internal consistency of the answer.
+            # No env state supplied: a refund claim cannot be verified, so it earns
+            # no execution credit (prevents rewarding a hallucinated refund_id).
             has_id = bool(obj.get("refund_id"))
             consistent = has_id == (obj["decision"] == "refund")
             if not consistent:
                 caps.append(("action_inconsistent", CAP_ACTION_INCONSISTENT))
-            exec_s = 1.0 if consistent and decision_ok else 0.0
+            if obj["decision"] == "refund":
+                caps.append(("refund_unverifiable_without_env_state", 1.0))
+            exec_s = 1.0 if consistent and decision_ok and obj["decision"] != "refund" else 0.0
 
         if not decision_ok:
             caps.append(("wrong_decision", CAP_WRONG_DECISION))

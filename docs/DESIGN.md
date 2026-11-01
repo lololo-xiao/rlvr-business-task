@@ -15,7 +15,7 @@
 {"order_id": str, "decision": "refund|reject|escalate|wait_return", "refund_amount": number, "refund_id": str|null}
 ```
 
-共 6 个任务实例（`rlvr_task/tasks.py: TASKS`），同一模板、不同订单，覆盖全部 4 种决策分支，
+共 9 个任务实例（`rlvr_task/tasks.py: TASKS`），同一模板、不同订单，覆盖全部 4 种决策分支（refund 3 / reject 3 / escalate 2 / wait_return 1），
 避免单题被策略"背答案"。
 
 ### 最终输出格式
@@ -49,9 +49,10 @@
 | 隐含约束 | 来源 | 陷阱实例 | 忽略后的错误结果 |
 | --- | --- | --- | --- |
 | 时限从**签收日**而非下单日起算 | `get_policy.rules` + `check_delivery` | O1001：下单 20 天、签收 12 天（silver 15 天） | 误判超期 → reject |
-| 时限随**会员等级**变化 | `get_customer_tier` | O1002：bronze，签收 9 天 | 套用 30 天 → 误退款 |
+| 时限随**会员等级**变化 | `get_customer_tier` | O1002：bronze，签收 9 天；O1007：gold，签收 20 天 | 套用 30 天 → 误退款；套用 7/15 天 → 误拒 |
 | 照片须在签收后 24h 内 | `check_attachment` + `check_delivery` | O1003：签收后 54h 拍摄 | 误退款 |
-| 阈值按等级，且按**损坏商品**金额而非订单总额 | `need_permission` + `get_policy.items` | O1004：silver 680 > 500；O1005：总额 1139 但咖啡机 899 ≤ 1000 | 误退款 / 误转人工 |
+| 阈值按等级，且按**损坏商品**金额而非订单总额 | `need_permission` + `get_policy.items` | O1004：silver 680 > 500；O1008：bronze 520 > 500；O1005：总额 1139 但咖啡机 899 ≤ 1000 | 误退款 / 误转人工 |
+| 只退**损坏数量**，而非整行或整单 | `check_attachment.damaged_qty` | O1009：4 只杯子碎 2 只 → 120 | 退 240 / 270 → 金额错 |
 | 包裹未到商家不能退 | `check_delivery.return_status` | O1005：`in_transit` | 提前退款 |
 | 不可退品类 | `get_policy.items.returnable` | O1006：笔记本电脑 4999 | 误转人工 |
 | 退款必须先查政策、先 dry-run | **由环境强制**（token 机制） | — | 无法拿到 `refund_id` |
@@ -132,7 +133,7 @@
 
 ## 6. 已知局限与可扩展方向
 
-- 实例数较少（6 个），可用同一规则引擎批量生成参数化订单来扩充；
+- 实例数较少（9 个），可用同一规则引擎批量生成参数化订单来扩充；
 - 附件是结构化记录而非真实图片（为了能客观判定）；
 - `notify_refund` 在 wait_return 分支中不计分；
 - 假设每个工单只有一个损坏附件；多商品损坏可扩展为按商品求和。

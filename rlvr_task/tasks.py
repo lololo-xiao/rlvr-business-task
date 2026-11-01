@@ -27,7 +27,7 @@ TASK_TEMPLATE = (
 
 TASKS = {
     oid: {"task_id": f"refund-{oid}", "order_id": oid, "text": TASK_TEMPLATE.format(order_id=oid)}
-    for oid in ("O1001", "O1002", "O1003", "O1004", "O1005", "O1006")
+    for oid in ("O1001", "O1002", "O1003", "O1004", "O1005", "O1006", "O1007", "O1008", "O1009")
 }
 
 ORDER_IN_TEXT_RE = re.compile(r"O\d{4}")
