@@ -22,6 +22,7 @@ from rlvr_task.config import (
     CAP_FABRICATED_REFUND,
     CAP_REFUND_WITHOUT_DRYRUN,
     CAP_HARMFUL_REFUND,
+    CAP_WRONG_AMOUNT,
     CAP_WRONG_DECISION,
     CAP_WRONGFUL_ESCALATE,
     CAP_WRONGFUL_REJECT,
@@ -41,20 +42,22 @@ def _parse_output(agent_output):
         return agent_output, None
     if not isinstance(agent_output, str):
         return None, f"output must be dict or JSON string, got {type(agent_output).__name__}"
-    text = agent_output.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.find("{"):] if "{" in text else text
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
+    # Models often write reasoning before the final JSON (possibly inside ```
+    # fences, possibly with other braces). Take the LAST decodable JSON object.
+    decoder = json.JSONDecoder()
+    last = None
+    pos = agent_output.find("{")
+    while pos != -1:
+        try:
+            obj, end = decoder.raw_decode(agent_output, pos)
+            if isinstance(obj, dict):
+                last = obj
+            pos = agent_output.find("{", end)
+        except json.JSONDecodeError:
+            pos = agent_output.find("{", pos + 1)
+    if last is None:
         return None, "no JSON object found"
-    try:
-        obj = json.loads(text[start:end + 1])
-    except json.JSONDecodeError as exc:
-        return None, f"invalid JSON: {exc}"
-    if not isinstance(obj, dict):
-        return None, "JSON root must be an object"
-    return obj, None
+    return last, None
 
 
 def _validate(obj):
@@ -151,6 +154,13 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
                 if has_id:
                     caps.append(("action_inconsistent", CAP_ACTION_INCONSISTENT))
                 exec_s = 1.0 if (not has_id and decision_ok) else 0.0
+
+        refunded_amount_wrong = state_ok and any(
+            isinstance(r.get("amount"), (int, float)) and
+            _amount_score(float(r["amount"]), truth["refund_amount"]) < 1.0
+            for r in env_state["refunds"] if isinstance(r, dict) and r.get("order_id") == task["order_id"])
+        if amount_s < 1.0 or refunded_amount_wrong:
+            caps.append(("wrong_amount", CAP_WRONG_AMOUNT))
 
         if not decision_ok:
             if obj["decision"] == "reject" and truth["decision"] != "reject":

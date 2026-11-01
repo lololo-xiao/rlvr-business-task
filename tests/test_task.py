@@ -33,7 +33,7 @@ def test_api_only_agent_gets_full_reward(order_id):
 ])
 def test_each_hidden_constraint_changes_reward(order_id, mistake):
     answer, state = _play(order_id, mistake)
-    assert compute_reward(TASKS[order_id]["text"], answer, state) <= 0.5
+    assert compute_reward(TASKS[order_id]["text"], answer, state) <= 0.2
 
 
 def test_dryrun_vs_fabricated_refund_caps():
@@ -113,10 +113,22 @@ def test_json_string_with_fences_is_accepted():
     assert compute_reward(TASKS["O1002"]["text"], out, {"refunds": []}) == 1.0
 
 
-def test_amount_partial_credit():
-    # escalate is correct, amount off by 10% -> amount component 0.5
+def test_last_json_object_in_free_text_is_used():
+    out = ('先检查 {"decision": "reject"} 这个想法不对，最终答案：\n'
+           '{"order_id": "O1004", "decision": "escalate", "refund_amount": 680, "refund_id": null}')
+    assert compute_reward(TASKS["O1004"]["text"], out, {"refunds": []}) == 1.0
+
+
+def test_any_wrong_amount_is_capped():
+    # escalate is correct, amount off by 10% -> money error -> cap 0.1
     out = {"order_id": "O1004", "decision": "escalate", "refund_amount": 612.0, "refund_id": None}
-    assert compute_reward(TASKS["O1004"]["text"], out, {"refunds": []}) == pytest.approx(0.5 + 0.15 + 0.2)
+    assert compute_reward(TASKS["O1004"]["text"], out, {"refunds": []}) == 0.1
+    # within 1% tolerance still full credit
+    out["refund_amount"] = 682.0
+    assert compute_reward(TASKS["O1004"]["text"], out, {"refunds": []}) == 1.0
+    # over-refund actually executed (240 instead of 120)
+    answer, state = _play("O1009", "refund_whole_line")
+    assert compute_reward(TASKS["O1009"]["text"], answer, state) == 0.1
 
 
 def test_env_enforces_policy_and_dryrun_before_refund():

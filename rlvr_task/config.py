@@ -50,6 +50,7 @@ AMOUNT_ZERO_CREDIT_REL = 0.20
 CAP_WRONG_DECISION = 0.2          # decision (or reject reason) differs from ground truth
 CAP_WRONGFUL_REJECT = 0.1         # rejected a ticket whose truth is not reject (hurts the customer)
 CAP_WRONGFUL_ESCALATE = 0.2       # escalated a ticket whose truth is not escalate (wastes review)
+CAP_WRONG_AMOUNT = 0.1            # claimed or actually refunded amount outside tolerance (money error)
 CAP_ACTION_INCONSISTENT = 0.2     # refunded but answer says not refunded / refund unverifiable (no env_state)
 CAP_DRYRUN_WITHOUT_REFUND = 0.2   # claims refund, dry-run passed, but issue_refund never executed
 CAP_FABRICATED_REFUND = 0.1       # claims refund with neither a passed dry-run nor a refund

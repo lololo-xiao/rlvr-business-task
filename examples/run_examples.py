@@ -24,7 +24,7 @@ SCENARIOS = [
     ("错误: 从下单日起算时限 -> 误拒", "O1001", "window_from_order_date", "wrong"),
     ("错误: 忽略等级用最长时限 -> 误退款", "O1002", "ignore_tier_window", "wrong"),
     ("错误: 用订单总额判阈值 -> 误转人工", "O1005", "use_order_total", "wrong"),
-    ("错误: 按整行数量退款 -> 金额错 (部分分)", "O1009", "refund_whole_line", "wrong"),
+    ("错误: 按整行数量退款 -> 多退钱", "O1009", "refund_whole_line", "wrong"),
     ("错误: 照片数少于声称损坏数仍按声称退", "O1010", "trust_claimed_qty", "wrong"),
     ("错误: dry-run 通过但没真正退款, 却声称已退", "O1001", "skip_issue_refund", "wrong"),
     ("错误: 没有 dry-run 也没退款, 纯编造已退款", "O1001", "fabricate_refund", "wrong"),
