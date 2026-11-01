@@ -27,7 +27,7 @@ TASK_TEMPLATE = (
 
 TASKS = {
     oid: {"task_id": f"refund-{oid}", "order_id": oid, "text": TASK_TEMPLATE.format(order_id=oid)}
-    for oid in ("O1001", "O1002", "O1003", "O1004", "O1005", "O1006", "O1007", "O1008", "O1009")
+    for oid in ("O1001", "O1002", "O1003", "O1004", "O1005", "O1006", "O1007", "O1008", "O1009", "O1010")
 }
 
 ORDER_IN_TEXT_RE = re.compile(r"O\d{4}")
@@ -48,17 +48,43 @@ def _parse_dt(s):
     return datetime.strptime(s, "%Y-%m-%d %H:%M")
 
 
+def eligible_items(items, attachments, delivered):
+    """Per-item evidence rule shared by the oracle.
+
+    A photo is valid if taken within PHOTO_MAX_HOURS_AFTER_DELIVERY after delivery.
+    For each returnable item with valid photos:
+        accepted_qty = min(max claimed damaged_qty, number of valid photos, bought qty)
+    (every damaged unit needs at least one photo; one unit may have several).
+    Returns {item_id: accepted_qty}.
+    """
+    by_id = {it["item_id"]: it for it in items}
+    deadline = delivered + timedelta(hours=PHOTO_MAX_HOURS_AFTER_DELIVERY)
+    valid = {}
+    for att in attachments:
+        if delivered <= _parse_dt(att["taken_at"]) <= deadline and att["item_id"] in by_id:
+            valid.setdefault(att["item_id"], []).append(att["damaged_qty"])
+    result = {}
+    for item_id, claims in valid.items():
+        item = by_id[item_id]
+        if not item["returnable"]:
+            continue
+        qty = min(max(claims), len(claims), item["qty"])
+        if qty > 0:
+            result[item_id] = qty
+    return result
+
+
 def solve(order_id, db_path=DB_PATH):
     """Reference oracle: apply the business rules to the base DB.
 
     Rule precedence:
-      1. damaged item not returnable          -> reject
-      2. outside tier return window           -> reject  (counted from delivery date)
-      3. no photo / photo > 24h after delivery-> reject
-      4. amount > tier review threshold       -> escalate
-      5. return parcel not at merchant        -> wait_return
-      6. otherwise                            -> refund
-    refund_amount = unit_price * damaged_qty * ratio for non-reject decisions, 0 for reject.
+      1. outside tier return window (from delivery date)            -> reject
+      2. no returnable item with a valid photo (<=24h after delivery) -> reject
+      3. refund amount > tier review threshold                         -> escalate
+      4. return parcel not at merchant                                 -> wait_return
+      5. otherwise                                                     -> refund
+    refund_amount = sum(unit_price * accepted_qty * ratio) over eligible items
+    for non-reject decisions, 0 for reject.
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -67,35 +93,32 @@ def solve(order_id, db_path=DB_PATH):
             "SELECT c.tier FROM orders o JOIN customers c ON o.customer_id=c.customer_id "
             "WHERE o.order_id=?", (order_id,)).fetchone()
         delivery = conn.execute("SELECT * FROM deliveries WHERE order_id=?", (order_id,)).fetchone()
-        att = conn.execute("SELECT * FROM attachments WHERE order_id=? ORDER BY taken_at",
-                           (order_id,)).fetchone()
-        item = None
-        if att is not None:
-            item = conn.execute("SELECT * FROM order_items WHERE item_id=?", (att["item_id"],)).fetchone()
+        atts = [dict(r) for r in conn.execute("SELECT * FROM attachments WHERE order_id=?", (order_id,))]
+        items = [dict(r) for r in conn.execute("SELECT * FROM order_items WHERE order_id=?", (order_id,))]
     finally:
         conn.close()
 
-    def answer(decision, amount=0.0, reason=""):
-        return {"order_id": order_id, "decision": decision,
-                "refund_amount": round(amount, 2), "reason": reason}
+    def answer(decision, amount=0.0, reason="", item_ids=()):
+        return {"order_id": order_id, "decision": decision, "refund_amount": round(amount, 2),
+                "reason": reason, "item_ids": sorted(item_ids)}
 
-    if cust is None or delivery is None or att is None or item is None:
+    if cust is None or delivery is None or not atts:
         return answer("reject", reason="missing order/delivery/evidence")
 
     tier = cust["tier"]
     delivered = _parse_dt(delivery["delivered_at"])
     today = datetime.strptime(CURRENT_DATE, "%Y-%m-%d")
-    amount = item["unit_price"] * att["damaged_qty"] * DEFAULT_REFUND_RATIO
-
-    if not item["returnable"]:
-        return answer("reject", reason="item not returnable")
     if (today.date() - delivered.date()).days > RETURN_WINDOW_DAYS[tier]:
         return answer("reject", reason="outside return window")
-    taken = _parse_dt(att["taken_at"])
-    if not (delivered <= taken <= delivered + timedelta(hours=PHOTO_MAX_HOURS_AFTER_DELIVERY)):
-        return answer("reject", reason="photo not taken within 24h after delivery")
+
+    accepted = eligible_items(items, atts, delivered)
+    if not accepted:
+        return answer("reject", reason="no returnable item with valid photo evidence")
+    price = {it["item_id"]: it["unit_price"] for it in items}
+    amount = sum(price[i] * q for i, q in accepted.items()) * DEFAULT_REFUND_RATIO
+
     if amount > MANUAL_REVIEW_THRESHOLD[tier]:
-        return answer("escalate", amount, reason="amount above tier review threshold")
+        return answer("escalate", amount, "amount above tier review threshold", accepted)
     if delivery["return_status"] != RETURN_ARRIVED_STATUS:
-        return answer("wait_return", amount, reason="return parcel not yet at merchant")
-    return answer("refund", amount, reason="eligible")
+        return answer("wait_return", amount, "return parcel not yet at merchant", accepted)
+    return answer("refund", amount, "eligible", accepted)

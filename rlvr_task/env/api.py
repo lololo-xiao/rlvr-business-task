@@ -34,7 +34,7 @@ TOOL_DESCRIPTIONS = {
     "need_permission": "need_permission(customer_id, amount) -> 该退款金额对该顾客是否需要人工审核。",
     "get_address": "get_address(order_id) -> 顾客收货地址与商家退货地址。",
     "notify_refund": "notify_refund(order_id, message) -> 通知顾客（如提醒按要求寄回商品）。",
-    "dryrun_refund": "dryrun_refund(order_id, item_id, amount, policy_id) -> 退款安全预检（须已调用 get_policy 和 check_attachment；只做安全检查，不判断是否符合退货政策），通过则返回一次性 dryrun_token。",
+    "dryrun_refund": "dryrun_refund(order_id, item_id | [item_id, ...], amount, policy_id) -> 退款安全预检（须已调用 get_policy 和 check_attachment；只做安全检查，不判断是否符合退货政策），通过则返回一次性 dryrun_token。",
     "issue_refund": "issue_refund(order_id, dryrun_token) -> 正式发起退款，返回 refund_id。必须使用 dryrun_refund 返回的 token。",
 }
 
@@ -56,7 +56,8 @@ class RefundEnv:
         self._conn.row_factory = sqlite3.Row
         self._fetched_policies = {}   # order_id -> policy_id fetched this episode
         self._checked_attachments = set()  # order_ids whose attachments were inspected
-        self._dryrun_tokens = {}      # token -> (order_id, item_id, amount)
+        self._dryrun_tokens = {}      # unused token -> (order_id, item_ids, amount)
+        self._dryrun_log = []         # every PASSED dry-run, exported for the verifier
         self._counter = 0
 
     # ------------------------------------------------------------ helpers
@@ -117,9 +118,9 @@ class RefundEnv:
         rules = {
             "return_window": "退货时限自签收日起算，天数按会员等级：" + "，".join(
                 f"{k} {v} 天" for k, v in RETURN_WINDOW_DAYS.items()),
-            "evidence": f"损坏照片须在签收后 {PHOTO_MAX_HOURS_AFTER_DELIVERY} 小时内拍摄，且对应具体商品。",
+            "evidence": f"损坏照片须在签收后 {PHOTO_MAX_HOURS_AFTER_DELIVERY} 小时内拍摄，且对应具体商品；每件损坏商品至少需要一张有效照片（同一件可有多张），认可损坏数量不超过该商品的有效照片数和购买数量。",
             "non_returnable": "returnable=false 的商品（如电脑）不支持退货退款。",
-            "refund_amount": f"按损坏商品单价 × 损坏数量 × 退款比例计算，默认比例 {DEFAULT_REFUND_RATIO:.0%}，运费由商家承担；调整比例或加收运费须转人工。",
+            "refund_amount": f"按各项可退损坏商品的 单价 × 认可损坏数量 × 退款比例 求和计算，默认比例 {DEFAULT_REFUND_RATIO:.0%}，运费由商家承担；调整比例或加收运费须转人工。",
             "manual_review": "退款金额超过会员等级对应的审核阈值须转人工（可调用 need_permission 查询）。",
             "refund_timing": "退货包裹到达商家后方可退款；未到达时应提醒顾客寄回并等待。",
         }
@@ -198,20 +199,29 @@ class RefundEnv:
             return _err(f"policy_id mismatch for {order_id}")
         if order_id not in self._checked_attachments:
             return _err("attachments not checked: call check_attachment(order_id) before refunding")
-        items = self._rows("SELECT unit_price, qty FROM order_items WHERE order_id=? AND item_id=?",
-                           (order_id, item_id))
-        if not items:
-            return _err(f"item {item_id!r} not in order {order_id}")
+        item_ids = [item_id] if isinstance(item_id, str) else item_id
+        if not isinstance(item_ids, (list, tuple)) or not item_ids or \
+                not all(isinstance(i, str) for i in item_ids) or len(set(item_ids)) != len(item_ids):
+            return _err("item_id must be an item id string or a non-empty list of distinct ids")
+        max_amount = 0.0
+        for iid in item_ids:
+            rows = self._rows("SELECT unit_price, qty FROM order_items WHERE order_id=? AND item_id=?",
+                              (order_id, iid))
+            if not rows:
+                return _err(f"item {iid!r} not in order {order_id}")
+            max_amount += rows[0]["unit_price"] * rows[0]["qty"]
         if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
             return _err(f"amount must be a positive number, got {amount!r}")
-        max_amount = items[0]["unit_price"] * items[0]["qty"]
         if amount > max_amount + 1e-9:
-            return _err(f"amount {amount} exceeds paid amount {max_amount} for item {item_id}")
+            return _err(f"amount {amount} exceeds paid amount {max_amount} for items {item_ids}")
         self._counter += 1
         token = f"DRY-{order_id}-{self._counter:03d}"
-        self._dryrun_tokens[token] = (order_id, item_id, float(amount))
+        joined = ",".join(sorted(item_ids))
+        self._dryrun_tokens[token] = (order_id, joined, float(amount))
+        self._dryrun_log.append({"dryrun_token": token, "order_id": order_id,
+                                 "item_ids": joined, "amount": float(amount)})
         return {"ok": True, "dryrun_token": token, "order_id": order_id,
-                "item_id": item_id, "amount": float(amount)}
+                "item_ids": sorted(item_ids), "amount": float(amount)}
 
     def issue_refund(self, order_id, dryrun_token):
         bad = self._check_order_arg(order_id)
@@ -224,15 +234,16 @@ class RefundEnv:
             return _err("dryrun_token does not belong to this order")
         self._counter += 1
         refund_id = f"RF-{order_id}-{self._counter:03d}"
-        self._conn.execute("INSERT INTO refunds VALUES (?,?,?,?,?)",
-                           (refund_id, order_id, info[1], info[2], CURRENT_DATE))
+        self._conn.execute("INSERT INTO refunds VALUES (?,?,?,?,?,?)",
+                           (refund_id, order_id, info[1], info[2], dryrun_token, CURRENT_DATE))
         return {"ok": True, "refund_id": refund_id, "order_id": order_id, "amount": info[2]}
 
     # ------------------------------------------------------------ harness hooks
     def export_state(self):
         """Final environment state, passed to the verifier by the harness."""
         return {
-            "refunds": self._rows("SELECT refund_id, order_id, item_id, amount FROM refunds"),
+            "refunds": self._rows("SELECT refund_id, order_id, item_id, amount, dryrun_token FROM refunds"),
+            "dryruns": [dict(d) for d in self._dryrun_log],
             "notifications": self._rows("SELECT order_id, message FROM notifications"),
         }
 

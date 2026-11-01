@@ -46,7 +46,11 @@ AMOUNT_ZERO_CREDIT_REL = 0.20
 
 # Hard caps (applied after the weighted sum; the lowest applicable wins).
 CAP_WRONG_DECISION = 0.2          # decision differs from ground truth
-CAP_ACTION_INCONSISTENT = 0.2     # says "refund" but no refund executed (or unverifiable), or vice versa
+CAP_ACTION_INCONSISTENT = 0.2     # refunded but answer says not refunded / refund unverifiable (no env_state)
+CAP_DRYRUN_WITHOUT_REFUND = 0.2   # claims refund, dry-run passed, but issue_refund never executed
+CAP_FABRICATED_REFUND = 0.1       # claims refund with neither a passed dry-run nor a refund
+CAP_REFUND_WITHOUT_DRYRUN = 0.1   # a refund record has no matching passed dry-run (defensive;
+                                  # the env enforces dry-run, so this only fires if that is bypassed)
 CAP_DUPLICATE_REFUND = 0.1        # more than one refund for the order
 CAP_HARMFUL_REFUND = 0.1          # refund executed when ground truth is not refund
 

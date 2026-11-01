@@ -25,6 +25,8 @@ def test_api_only_agent_gets_full_reward(order_id):
     ("O1002", "ignore_tier_window"),
     ("O1005", "use_order_total"),
     ("O1009", "refund_whole_line"),
+    ("O1010", "trust_claimed_qty"),
+    ("O1001", "fabricate_refund"),
     ("O1001", "skip_issue_refund"),
     ("O1001", "double_refund"),
 ])
@@ -33,11 +35,33 @@ def test_each_hidden_constraint_changes_reward(order_id, mistake):
     assert compute_reward(TASKS[order_id]["text"], answer, state) <= 0.5
 
 
+def test_dryrun_vs_fabricated_refund_caps():
+    a1, s1 = _play("O1001", "skip_issue_refund")
+    a2, s2 = _play("O1001", "fabricate_refund")
+    assert compute_reward(TASKS["O1001"]["text"], a1, s1) == 0.2
+    assert compute_reward(TASKS["O1001"]["text"], a2, s2) == 0.1
+
+
+def test_refund_without_passed_dryrun_is_capped_defensively():
+    out = {"order_id": "O1001", "decision": "refund", "refund_amount": 299, "refund_id": "RF-X"}
+    state = {"refunds": [{"refund_id": "RF-X", "order_id": "O1001", "amount": 299, "dryrun_token": None}],
+             "dryruns": []}
+    assert compute_reward(TASKS["O1001"]["text"], out, state) == 0.1
+
+
+def test_multi_attachment_rule():
+    from rlvr_task.tasks import solve
+    assert solve("O1009")["refund_amount"] == 120.0          # 2 photos, claimed 2 -> 2 x 60
+    assert solve("O1010") ["refund_amount"] == 129.0         # 1 photo for 2 claimed cups; kettle photo invalid
+    assert solve("O1010")["item_ids"] == ["I1010A"]
+
+
 def test_fake_refund_without_env_state_is_not_full_reward():
     out = {"order_id": "O1001", "decision": "refund", "refund_amount": 299, "refund_id": "RF-FAKE"}
     assert compute_reward(TASKS["O1001"]["text"], out) < 1.0
     # with env state, an unexecuted refund claim is capped
     assert compute_reward(TASKS["O1001"]["text"], out, {"refunds": []}) <= 0.2
+    assert compute_reward(TASKS["O1001"]["text"], out) == 0.2
 
 
 @pytest.mark.parametrize("decision", ["refund", "reject", "escalate", "wait_return"])

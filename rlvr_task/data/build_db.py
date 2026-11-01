@@ -32,7 +32,7 @@ CREATE TABLE addresses (
     order_id TEXT PRIMARY KEY, customer_address TEXT, merchant_address TEXT
 );
 CREATE TABLE refunds (
-    refund_id TEXT PRIMARY KEY, order_id TEXT, item_id TEXT, amount REAL, created_at TEXT
+    refund_id TEXT PRIMARY KEY, order_id TEXT, item_id TEXT, amount REAL, dryrun_token TEXT, created_at TEXT
 );
 CREATE TABLE notifications (
     order_id TEXT, message TEXT
@@ -58,6 +58,7 @@ ORDERS = [
     ("O1007", "C03", "2026-10-05", 459.0, "delivered", ""),
     ("O1008", "C02", "2026-10-27", 520.0, "delivered", ""),
     ("O1009", "C04", "2026-10-27", 270.0, "delivered", "易碎品"),
+    ("O1010", "C01", "2026-10-26", 372.0, "delivered", ""),
     ("O0901", "C01", "2026-09-01", 89.0, "completed", ""),
 ]
 
@@ -75,6 +76,9 @@ ORDER_ITEMS = [
     ("I1008A", "O1008", "投影仪", "electronics", 520.0, 1, 1),
     ("I1009A", "O1009", "玻璃杯", "kitchen", 60.0, 4, 1),
     ("I1009B", "O1009", "餐垫", "home", 30.0, 1, 1),
+    ("I1010A", "O1010", "保温杯", "kitchen", 129.0, 2, 1),
+    ("I1010B", "O1010", "电水壶", "kitchen", 89.0, 1, 1),
+    ("I1010C", "O1010", "毛巾", "home", 25.0, 1, 1),
     ("I0901A", "O0901", "数据线", "accessory", 89.0, 1, 1),
 ]
 
@@ -94,6 +98,8 @@ DELIVERIES = [
     ("O1008", "中通", "ZT100008", "2026-10-28 09:00", "2026-10-29 12:00", "ZTR90008", "arrived_at_merchant"),
     # O1009: 2 of 4 glasses broken -> refund 2 x 60, not the whole line / order
     ("O1009", "京东", "JD100009", "2026-10-28 09:00", "2026-10-30 09:00", "JDR90009", "arrived_at_merchant"),
+    # O1010: multi-item claim; only the cup has a valid photo, and only 1 photo for it
+    ("O1010", "顺丰", "SF100010", "2026-10-27 09:00", "2026-10-29 10:00", "SFR90010", "arrived_at_merchant"),
     ("O0901", "顺丰", "SF090001", "2026-09-02 09:00", "2026-09-04 10:00", None, None),
 ]
 
@@ -107,7 +113,12 @@ ATTACHMENTS = [
     ("A6", "O1006", "I1006A", "laptop.jpg", "屏幕划痕", 1, "2026-10-29 12:00", "2026-10-29 12:05"),
     ("A7", "O1007", "I1007A", "fryer.jpg", "炸篮变形", 1, "2026-10-20 15:00", "2026-10-21 09:00"),
     ("A8", "O1008", "I1008A", "projector.jpg", "镜头碎裂", 1, "2026-10-29 20:00", "2026-10-29 20:10"),
-    ("A9", "O1009", "I1009A", "glasses.jpg", "两只碎裂", 2, "2026-10-30 12:00", "2026-10-31 10:00"),
+    # O1009: two photos of the glasses, claimed 2 broken -> min(2 claimed, 2 photos, 4 bought) = 2
+    ("A9", "O1009", "I1009A", "glasses_1.jpg", "两只碎裂", 2, "2026-10-30 12:00", "2026-10-31 10:00"),
+    ("A10", "O1009", "I1009A", "glasses_2.jpg", "碎裂特写", 1, "2026-10-30 12:05", "2026-10-31 10:00"),
+    # O1010: cup claims 2 broken but only 1 photo -> 1 accepted; kettle photo 30h after delivery -> invalid
+    ("A11", "O1010", "I1010A", "cup.jpg", "两只凹陷", 2, "2026-10-29 13:00", "2026-10-29 13:10"),
+    ("A12", "O1010", "I1010B", "kettle.jpg", "底座开裂", 1, "2026-10-30 16:00", "2026-10-30 16:10"),
 ]
 
 ADDRESSES = [

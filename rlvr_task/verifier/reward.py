@@ -17,7 +17,10 @@ from rlvr_task.config import (
     AMOUNT_REL_TOLERANCE,
     AMOUNT_ZERO_CREDIT_REL,
     CAP_ACTION_INCONSISTENT,
+    CAP_DRYRUN_WITHOUT_REFUND,
     CAP_DUPLICATE_REFUND,
+    CAP_FABRICATED_REFUND,
+    CAP_REFUND_WITHOUT_DRYRUN,
     CAP_HARMFUL_REFUND,
     CAP_WRONG_DECISION,
     DB_PATH,
@@ -101,20 +104,30 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
 
         # ---- execution: does the final world state match the claim and the truth?
         caps = []
-        refunds = None
-        if isinstance(env_state, dict) and isinstance(env_state.get("refunds"), list):
-            refunds = [r for r in env_state["refunds"]
-                       if isinstance(r, dict) and r.get("order_id") == task["order_id"]]
-        if refunds is not None:
+        claims_refund = obj["decision"] == "refund"
+        state_ok = isinstance(env_state, dict) and isinstance(env_state.get("refunds"), list)
+        if state_ok:
+            oid = task["order_id"]
+            refunds = [r for r in env_state["refunds"] if isinstance(r, dict) and r.get("order_id") == oid]
+            dryruns = [d for d in env_state.get("dryruns") or [] if isinstance(d, dict) and d.get("order_id") == oid]
+            passed_tokens = {d.get("dryrun_token") for d in dryruns}
             refunded = len(refunds) > 0
+
             if len(refunds) > 1:
                 caps.append(("duplicate_refund", CAP_DUPLICATE_REFUND))
             if refunded and truth["decision"] != "refund":
                 caps.append(("harmful_refund", CAP_HARMFUL_REFUND))
-            claims_refund = obj["decision"] == "refund"
+            if any(r.get("dryrun_token") not in passed_tokens for r in refunds):
+                caps.append(("refund_without_dryrun", CAP_REFUND_WITHOUT_DRYRUN))
+            if claims_refund and not refunded:
+                if dryruns:
+                    caps.append(("dryrun_passed_but_no_refund", CAP_DRYRUN_WITHOUT_REFUND))
+                else:
+                    caps.append(("fabricated_refund", CAP_FABRICATED_REFUND))
             id_matches = refunded and obj.get("refund_id") in {r.get("refund_id") for r in refunds}
-            if claims_refund != refunded or (claims_refund and not id_matches):
+            if refunded and (not claims_refund or not id_matches):
                 caps.append(("action_inconsistent", CAP_ACTION_INCONSISTENT))
+
             if truth["decision"] == "refund":
                 exec_s = 1.0 if (len(refunds) == 1 and id_matches and
                                  _amount_score(float(refunds[0].get("amount", -1)), truth["refund_amount"]) == 1.0) else 0.0
@@ -122,10 +135,10 @@ def evaluate(task_text, agent_output, env_state=None, db_path=DB_PATH):
                 exec_s = 1.0 if not refunded else 0.0
         else:
             # No env state supplied: a refund claim cannot be verified, so it is
-            # treated like an unexecuted refund (prevents rewarding a hallucinated
-            # refund_id). Harnesses must pass env.export_state().
+            # capped (prevents rewarding a hallucinated refund_id).
+            # Harnesses must pass env.export_state().
             has_id = bool(obj.get("refund_id"))
-            if obj["decision"] == "refund":
+            if claims_refund:
                 caps.append(("refund_unverifiable_without_env_state", CAP_ACTION_INCONSISTENT))
                 exec_s = 0.0
             else:
