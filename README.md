@@ -20,8 +20,8 @@ rlvr_task/
   verifier/reward.py   # compute_reward / evaluate：奖励计算
 examples/
   scripted_agent.py    # 只用 API 解题的脚本 Agent（可注入特定错误）
-  run_examples.py      # 调用样例：10 个正确场景 + 9 个错误场景 + 非法输入
-tests/test_task.py     # pytest（56 个用例）
+  run_examples.py      # 调用样例：10 个正确场景 + 10 个错误场景 + 非法输入
+tests/test_task.py     # pytest（68 个用例）
 docs/DESIGN.md         # 设计说明
 Dockerfile, requirements.txt
 ```
@@ -90,9 +90,10 @@ reward = compute_reward(task["text"], final_answer, env_state=env.export_state()
    | 既没 dry-run 也没退款，纯编造已退款 | 0.1 | 上限 0.1 |
    | 重复退款 | 0.1 | 上限 0.1 |
    | 拒绝原因码写错（应为 invalid_evidence） | 0.2 | 决策错误，上限 0.2 |
+   | 把保修期（冗余 API `get_product_info`）当退货时限 → 误退款 | 0.1 | 资金损失，上限 0.1 |
 
    此外还会演示两点：无法解析的输出得 0 分，reject 缺少原因码也算格式错误，这是唯一会得 0 的情况；非法 API 调用返回错误字典，不会中断流程。
-3. `docker run --rm rlvr-refund python -m pytest -q`，预期 56 passed
+3. `docker run --rm rlvr-refund python -m pytest -q`，预期 68 passed
 
 ## 调用样例输出（节选）
 

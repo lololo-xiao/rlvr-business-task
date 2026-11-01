@@ -30,6 +30,7 @@ SCENARIOS = [
     ("错误: 没有 dry-run 也没退款, 纯编造已退款", "O1001", "fabricate_refund", "wrong"),
     ("错误: 重复退款", "O1001", "double_refund", "wrong"),
     ("错误: 拒绝原因写错 (应为照片无效)", "O1003", "wrong_reject_reason", "wrong"),
+    ("错误: 把保修期(冗余API)当退货时限 -> 误退款", "O1002", "use_warranty_as_window", "wrong"),
 ]
 
 
@@ -69,6 +70,7 @@ def main():
     print("  非法订单号               ->", env.check_delivery("1001; DROP TABLE orders"))
     print("  未知工具                 ->", env.call("delete_all_orders"))
     print("  参数错误                 ->", env.call("get_policy", oid="O1001"))
+    print("  非法商品号               ->", env.call("get_product_info", item_id="I1001"))
     env.close()
 
 

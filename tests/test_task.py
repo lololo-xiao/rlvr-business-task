@@ -1,9 +1,9 @@
 import pytest
 
 from examples.scripted_agent import run_agent
-from rlvr_task.env import RefundEnv
+from rlvr_task.env import TOOL_DESCRIPTIONS, RefundEnv
 from rlvr_task.tasks import TASKS, find_task, solve
-from rlvr_task.verifier import compute_reward
+from rlvr_task.verifier import compute_reward, evaluate
 
 
 def _play(order_id, mistake=None):
@@ -28,6 +28,7 @@ def test_api_only_agent_gets_full_reward(order_id):
     ("O1010", "trust_claimed_qty"),
     ("O1001", "fabricate_refund"),
     ("O1003", "wrong_reject_reason"),
+    ("O1002", "use_warranty_as_window"),
     ("O1001", "skip_issue_refund"),
     ("O1001", "double_refund"),
 ])
@@ -146,8 +147,31 @@ def test_env_enforces_policy_and_dryrun_before_refund():
 
 
 def test_product_info_is_redundant_but_works():
-    res = RefundEnv().get_product_info("I1001A")
+    env = RefundEnv()
+    res = env.get_product_info("I1001A")
     assert res["ok"] and res["warranty_days"] == 365
+    assert env.call("get_product_info", item_id="I1002A")["warranty_days"] == 730
+    assert "get_product_info" in TOOL_DESCRIPTIONS
+
+
+class _NoProductInfoEnv(RefundEnv):
+    def get_product_info(self, item_id):
+        raise AssertionError("redundant API must not be needed")
+
+
+@pytest.mark.parametrize("order_id", list(TASKS))
+def test_redundant_apis_not_needed_for_full_reward(order_id):
+    env = _NoProductInfoEnv()
+    answer = run_agent(env, order_id)
+    assert compute_reward(TASKS[order_id]["text"], answer, env.export_state()) == 1.0
+
+
+def test_warranty_trap_leads_to_harmful_refund():
+    env = RefundEnv()
+    answer = run_agent(env, "O1002", "use_warranty_as_window")
+    res = evaluate(TASKS["O1002"]["text"], answer, env.export_state())
+    assert answer["decision"] == "refund" and res["reward"] == 0.1
+    assert "harmful_refund" in [c[0] for c in res["caps"]]
 
 
 def test_episodes_are_isolated():

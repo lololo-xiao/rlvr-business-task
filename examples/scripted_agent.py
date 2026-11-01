@@ -22,6 +22,7 @@ MISTAKES = (
     "fabricate_refund",        # claim refund with neither dry-run nor refund
     "double_refund",           # refund twice
     "wrong_reject_reason",     # always cite outside_window when rejecting
+    "use_warranty_as_window",  # take product warranty_days (redundant API) as return window
 )
 
 
@@ -46,6 +47,10 @@ def run_agent(env, order_id, mistake=None):
     window = RETURN_WINDOW_DAYS[tier]
     if mistake == "ignore_tier_window":
         window = max(RETURN_WINDOW_DAYS.values())
+    if mistake == "use_warranty_as_window":
+        # falls for the redundant API: warranty is not the return window
+        first_item = attachments[0]["item_id"] if attachments else policy["items"][0]["item_id"]
+        window = env.get_product_info(first_item)["warranty_days"]
 
     def done(decision, amount=0.0, refund_id=None, reject_reason=None):
         if reject_reason and mistake == "wrong_reject_reason":
