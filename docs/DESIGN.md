@@ -63,6 +63,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | 只退**认可的损坏数量**，不是整行或整单 | `check_attachment.damaged_qty` | O1009：4 个杯子坏了 2 个（有 2 张照片） | 退 240 或 270，应退 120 |
 | 阈值按等级定，并且看**应退金额**而不是订单总额 | `need_permission` + `get_policy.items` | O1004：silver 680 > 500；O1008：bronze 520 > 200；O1005：订单总额 1139，但咖啡机只有 899 ≤ 1000 | 误退款，或误转人工 |
 | 包裹没到商家不能退款 | `check_delivery.return_status` | O1005：状态为 `in_transit` | 提前退款 |
+| 退货时限不是**保修期** | 冗余 API `get_product_info.warranty_days` | O1002：牙刷保修 730 天，但 bronze 的退货时限只有 7 天 | 把保修期当时限 → 误退款 |
 | 不可退品类 | `get_policy.items.returnable` | O1006：笔记本电脑 4999 | 误转人工 |
 | 退款前必须先查政策、查附件、做 dry-run | **由环境强制**（token 机制） | — | 拿不到 `refund_id` |
 
@@ -83,6 +84,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | `notify_refund(order_id, message)` | 动作 | wait_return 时建议调用 | 记录一条通知 |
 | `check_order(customer_id)` | 查询 | **冗余** | 历史订单及 `order_total`。订单总额是金额陷阱 |
 | `get_address(order_id)` | 查询 | **冗余** | 收货地址和退货地址 |
+| `get_product_info(item_id)` | 查询 | **冗余** | 品牌、产地、`warranty_days` 保修期、重量、评分、库存。保修期是陷阱：保修期不是退货时限 |
 
 `clauses` 是平台的完整售后政策，共 6 条。损坏退货只适用 R2（质量问题和运输损坏）、R4（人工审核）、R5（不可退商品）、R6（退款时机）。
 R1（七天无理由退货，从**下单日**起算、扣运费）和 R3（生鲜 48 小时）是干扰条款，看起来相关，但套用后会算出错误的时限或金额。

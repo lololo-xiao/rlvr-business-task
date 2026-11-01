@@ -145,6 +145,11 @@ def test_env_enforces_policy_and_dryrun_before_refund():
     env.close()
 
 
+def test_product_info_is_redundant_but_works():
+    res = RefundEnv().get_product_info("I1001A")
+    assert res["ok"] and res["warranty_days"] == 365
+
+
 def test_episodes_are_isolated():
     _play("O1001")
     assert RefundEnv().export_state()["refunds"] == []
@@ -154,6 +159,7 @@ def test_episodes_are_isolated():
     ("get_policy", {"order_id": 1001}), ("get_policy", {"order_id": "O9999"}),
     ("get_customer_tier", {"customer_id": "X"}), ("need_permission", {"customer_id": "C01", "amount": "a"}),
     ("nope", {}), ("check_delivery", {}),
+    ("get_product_info", {"item_id": "X1"}), ("get_product_info", {"item_id": "I9999Z"}),
 ])
 def test_bad_api_calls_return_errors(name, kwargs):
     res = RefundEnv().call(name, **kwargs)

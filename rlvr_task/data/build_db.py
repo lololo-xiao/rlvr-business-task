@@ -31,6 +31,10 @@ CREATE TABLE attachments (
 CREATE TABLE addresses (
     order_id TEXT PRIMARY KEY, customer_address TEXT, merchant_address TEXT
 );
+CREATE TABLE products (
+    item_id TEXT PRIMARY KEY, brand TEXT, origin TEXT, warranty_days INTEGER,
+    weight_kg REAL, rating REAL, stock INTEGER
+);
 CREATE TABLE refunds (
     refund_id TEXT PRIMARY KEY, order_id TEXT, item_id TEXT, amount REAL, dryrun_token TEXT, created_at TEXT
 );
@@ -121,6 +125,24 @@ ATTACHMENTS = [
     ("A12", "O1010", "I1010B", "kettle.jpg", "底座开裂", 1, "2026-10-30 16:00", "2026-10-30 16:10"),
 ]
 
+# Redundant product metadata. warranty_days is a trap: warranty is NOT the
+# return window (return window comes from policy clause R2 + customer tier).
+PRODUCT_EXTRAS = {
+    "I1001A": ("声跃", "深圳", 365, 0.2), "I1001B": ("壳研所", "东莞", 0, 0.05),
+    "I1002A": ("洁齿", "宁波", 730, 0.3), "I1003A": ("明眸", "中山", 365, 1.2),
+    "I1004A": ("键客", "苏州", 365, 0.9), "I1004B": ("键客", "苏州", 0, 0.2),
+    "I1005A": ("醇萃", "佛山", 365, 4.5), "I1005B": ("醇萃", "云南", 0, 0.5),
+    "I1006A": ("云算", "重庆", 730, 1.6), "I1007A": ("轻烹", "佛山", 365, 3.8),
+    "I1008A": ("光影", "深圳", 365, 2.1), "I1009A": ("透亮", "淄博", 0, 0.3),
+    "I1009B": ("家栖", "义乌", 0, 0.1), "I1010A": ("恒温", "永康", 180, 0.4),
+    "I1010B": ("沸点", "永康", 365, 1.1), "I1010C": ("柔棉", "高阳", 0, 0.2),
+    "I0901A": ("连通", "东莞", 90, 0.05),
+}
+PRODUCTS = [
+    (iid, brand, origin, warranty, weight, round(4.0 + (i % 9) / 10, 1), 100 + i * 7)
+    for i, (iid, (brand, origin, warranty, weight)) in enumerate(PRODUCT_EXTRAS.items())
+]
+
 ADDRESSES = [
     (oid, f"{cid} 的收货地址（模拟）", "杭州市余杭区仓储中心 1 号库")
     for oid, cid, *_ in ORDERS
@@ -141,6 +163,7 @@ def build(db_path: Path = DB_PATH) -> Path:
         conn.executemany("INSERT INTO deliveries VALUES (?,?,?,?,?,?,?)", DELIVERIES)
         conn.executemany("INSERT INTO attachments VALUES (?,?,?,?,?,?,?,?)", ATTACHMENTS)
         conn.executemany("INSERT INTO addresses VALUES (?,?,?)", ADDRESSES)
+        conn.executemany("INSERT INTO products VALUES (?,?,?,?,?,?,?)", PRODUCTS)
         conn.commit()
     finally:
         conn.close()

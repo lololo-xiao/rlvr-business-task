@@ -23,6 +23,7 @@ from rlvr_task.config import (
 
 ORDER_ID_RE = re.compile(r"^O\d{4}$")
 CUSTOMER_ID_RE = re.compile(r"^C\d{2}$")
+ITEM_ID_RE = re.compile(r"^I\d{4}[A-Z]$")
 
 # Tool descriptions handed to the agent (e.g. as a tool schema in the harness).
 TOOL_DESCRIPTIONS = {
@@ -33,6 +34,7 @@ TOOL_DESCRIPTIONS = {
     "get_customer_tier": "get_customer_tier(customer_id) -> 顾客会员等级（bronze/silver/gold）及联系方式。",
     "need_permission": "need_permission(customer_id, amount) -> 该退款金额对该顾客是否需要人工审核。",
     "get_address": "get_address(order_id) -> 顾客收货地址与商家退货地址。",
+    "get_product_info": "get_product_info(item_id) -> 商品详情（品牌、产地、保修期天数、重量、评分、库存）。",
     "notify_refund": "notify_refund(order_id, message) -> 通知顾客（如提醒按要求寄回商品）。",
     "dryrun_refund": "dryrun_refund(order_id, item_id | [item_id, ...], amount, policy_id) -> 退款安全预检（须已调用 get_policy 和 check_attachment；只做安全检查，不判断是否符合退货政策），通过则返回一次性 dryrun_token。",
     "issue_refund": "issue_refund(order_id, dryrun_token) -> 正式发起退款，返回 refund_id。必须使用 dryrun_refund 返回的 token。",
@@ -195,6 +197,18 @@ class RefundEnv:
         if bad:
             return bad
         return {"ok": True, **self._rows("SELECT * FROM addresses WHERE order_id=?", (order_id,))[0]}
+
+    def get_product_info(self, item_id):
+        """Redundant API. warranty_days is a distractor (warranty != return window)."""
+        if not isinstance(item_id, str) or not ITEM_ID_RE.match(item_id):
+            return _err(f"invalid item_id format: {item_id!r} (expected like 'I1001A')")
+        rows = self._rows(
+            "SELECT p.item_id, i.name, i.category, p.brand, p.origin, p.warranty_days, "
+            "p.weight_kg, p.rating, p.stock FROM products p JOIN order_items i ON p.item_id=i.item_id "
+            "WHERE p.item_id=?", (item_id,))
+        if not rows:
+            return _err(f"item not found: {item_id}")
+        return {"ok": True, **rows[0]}
 
     # ------------------------------------------------------------ action APIs
     def notify_refund(self, order_id, message=""):
