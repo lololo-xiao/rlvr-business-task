@@ -169,4 +169,4 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 - 附件是结构化记录，不是真实图片。这是为了能客观判定。
 - `notify_refund` 在 wait_return 分支里不计分。
 - 误拒和误转人工的上限目前是固定值。真实业务里，代价可能还和订单金额有关，可以进一步改成随金额变化。
-- 因为"金额错误封顶 0.1"，`config` 里金额线性衰减的参数（`AMOUNT_ZERO_CREDIT_REL`）目前不影响最终奖励，只体现在 `evaluate()` 的分项明细里。如果以后想恢复部分分，降低或去掉 `CAP_WRONG_AMOUNT` 即可。
+- 因为"金额错误封顶 0.1"，`config` 里金额线性衰减的参数（`AMOUNT_ZERO_CREDIT_REL`）目前不影响最终奖励，只体现在 `evaluate()` 的分项明细里。如果以后想恢复部分分，调高或去掉 `CAP_WRONG_AMOUNT` 即可。
