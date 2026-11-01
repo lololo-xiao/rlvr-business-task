@@ -55,7 +55,8 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 
 | 隐含约束 | 信息来源 | 陷阱实例 | 忽略后的错误结果 |
 | --- | --- | --- | --- |
-| 时限从**签收日**起算，不是下单日 | `get_policy.rules` + `check_delivery` | O1001：下单已 20 天，签收才 8 天（silver 10 天） | 误判超期 → reject |
+| 损坏退货要选对**条款**：适用 R2（质量问题），不适用 R1（七天无理由） | `get_policy.clauses` | 所有实例 | 按 R1 从下单日起算时限 → 误拒；按 R1 扣运费 → 金额错误 |
+| 时限从**签收日**起算，不是下单日 | `get_policy.clauses[R2].window_start` + `check_delivery` | O1001：下单已 20 天，签收才 8 天（silver 10 天） | 误判超期 → reject |
 | 时限随**会员等级**变化 | `get_customer_tier` | O1002：bronze，签收 9 天；O1007：gold，签收 12 天 | 套用最长时限 → 误退款；套用 7 或 10 天 → 误拒 |
 | 照片必须在签收后 24 小时内拍摄 | `check_attachment` + `check_delivery` | O1003：签收后 54 小时才拍；O1010：水壶照片在签收后 30 小时拍 | 误退款，或金额多算 |
 | 每件损坏至少要有一张照片 | `check_attachment` | O1010：声称 2 个杯子坏了，但只有 1 张照片 | 退 258，应退 129 |
@@ -72,7 +73,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 
 | API | 类型 | 是否必要 | 返回要点 |
 | --- | --- | --- | --- |
-| `get_policy(order_id)` | 查询 | 必要 | `policy_id`、`customer_id`、`order_date`、商品明细（单价、数量、`returnable`）、规则说明、`current_date` |
+| `get_policy(order_id)` | 查询 | 必要 | `policy_id`、`customer_id`、`order_date`、商品明细（单价、数量、`returnable`）、售后政策条款全集 `clauses`、`current_date` |
 | `check_attachment(order_id)` | 查询 | 必要 | 每张附件的 `item_id`、`damage_type`、`damaged_qty`、`taken_at` |
 | `check_delivery(order_id)` | 查询 | 必要 | `delivered_at`、`return_status`；另有承运商、单号等干扰字段 |
 | `get_customer_tier(customer_id)` | 查询 | 必要 | `tier`；另有姓名、电话等干扰字段 |
@@ -82,6 +83,10 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | `notify_refund(order_id, message)` | 动作 | wait_return 时建议调用 | 记录一条通知 |
 | `check_order(customer_id)` | 查询 | **冗余** | 历史订单及 `order_total`。订单总额是金额陷阱 |
 | `get_address(order_id)` | 查询 | **冗余** | 收货地址和退货地址 |
+
+`clauses` 是平台的完整售后政策，共 6 条。损坏退货只适用 R2（质量问题和运输损坏）、R4（人工审核）、R5（不可退商品）、R6（退款时机）。
+R1（七天无理由退货，从**下单日**起算、扣运费）和 R3（生鲜 48 小时）是干扰条款，看起来相关，但套用后会算出错误的时限或金额。
+R2 只给出结构化参数（例如 `window_start: delivered_at`），不附带解释，Agent 需要自己理解参数含义。
 
 干扰字段包括 `phone`、`registered_at`、`remark`、`carrier`、`tracking_no`、`file_name`、`uploaded_at`、`order_total` 等。
 其中证据规则看的是拍摄时间 `taken_at`，不是上传时间 `uploaded_at`。
@@ -93,7 +98,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 
 | 步 | 调用 | 目标 | 关键返回 | 依赖 |
 | --- | --- | --- | --- | --- |
-| 1 | `get_policy("O1001")` | 获取客户、商品和规则 | `customer_id=C01`、`policy_id`、耳机 299 / 手机壳 59 | 工单里的订单号 |
+| 1 | `get_policy("O1001")` | 获取客户、商品，并选出适用的条款 R2/R4/R5/R6 | `customer_id=C01`、`policy_id`、耳机 299 / 手机壳 59 | 工单里的订单号 |
 | 2 | `check_attachment("O1001")` | 确认损坏的商品和证据 | 耳机 1 张照片，`taken_at=10-24 20:30` | — |
 | 3 | `check_delivery("O1001")` | 查签收时间和退货包裹状态 | `delivered_at=10-24 10:00`、`arrived_at_merchant` | — |
 | 4 | `get_customer_tier("C01")` | 由等级确定时限 | `silver`，时限 10 天 | 步骤 1 的 `customer_id` |
@@ -104,7 +109,7 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 | 输出 | `{"decision":"refund","refund_amount":299,"refund_id":"RF-..."}` | | | |
 
 **为什么必须多步调用：** 每个判断都需要多个 API 的数据关联起来。
-- 判断时限：需要签收时间（来自 delivery）、会员等级（来自 tier）、规则（来自 policy）三方关联。
+- 判断时限：需要先从政策中选出适用的条款 R2，再把签收时间（来自 delivery）、会员等级（来自 tier）三方关联起来。
 - 计算金额：需要逐件核对附件证据（来自 attachment），再乘以单价（来自 policy）。
 - 判断是否审核：需要上一步算出的金额，再结合等级。
 
@@ -168,5 +173,6 @@ refund 4 个、reject 3 个、escalate 2 个、wait_return 1 个。这样可以�
 - 实例数量较少（10 个）。可以复用同一套规则，批量生成参数化订单来扩充。
 - 附件是结构化记录，不是真实图片。这是为了能客观判定。
 - `notify_refund` 在 wait_return 分支里不计分。
+- 政策目前对所有订单都一样。可以扩展为**按下单日期选择政策版本**（政策在某天改过规则），这是更强的隐含约束。
 - 误拒和误转人工的上限目前是固定值。真实业务里，代价可能还和订单金额有关，可以进一步改成随金额变化。
 - 因为"金额错误封顶 0.1"，`config` 里金额线性衰减的参数（`AMOUNT_ZERO_CREDIT_REL`）目前不影响最终奖励，只体现在 `evaluate()` 的分项明细里。如果以后想恢复部分分，调高或去掉 `CAP_WRONG_AMOUNT` 即可。

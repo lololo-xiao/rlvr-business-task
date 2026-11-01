@@ -31,7 +31,7 @@ def _dt(s):
 
 def run_agent(env, order_id, mistake=None):
     """Returns the final JSON answer (dict). `mistake` is None or one of MISTAKES."""
-    # Step 1: policy -> customer_id, items, rules, policy_id
+    # Step 1: policy -> customer_id, items, clauses (damage claim -> R2/R4/R5/R6), policy_id
     policy = env.get_policy(order_id)
     customer_id = policy["customer_id"]
     today = datetime.strptime(policy["current_date"], "%Y-%m-%d")

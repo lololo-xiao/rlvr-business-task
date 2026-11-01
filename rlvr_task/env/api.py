@@ -27,7 +27,7 @@ CUSTOMER_ID_RE = re.compile(r"^C\d{2}$")
 # Tool descriptions handed to the agent (e.g. as a tool schema in the harness).
 TOOL_DESCRIPTIONS = {
     "check_order": "check_order(customer_id) -> 该顾客的历史订单列表（订单号、下单日期、订单总额、状态）。",
-    "get_policy": "get_policy(order_id) -> 订单商品明细与售后政策（policy_id、customer_id、商品单价/数量/是否可退、退货规则说明）。退款前必须先获取政策。",
+    "get_policy": "get_policy(order_id) -> 订单商品明细与平台售后政策条款全集（policy_id、customer_id、商品单价/数量/是否可退、clauses）。不同条款适用于不同情形。退款前必须先获取政策。",
     "check_attachment": "check_attachment(order_id) -> 顾客为该订单上传的附件（对应商品、损坏描述、损坏数量、拍摄时间）。",
     "check_delivery": "check_delivery(order_id) -> 物流信息（承运商、签收时间、退货包裹单号与状态）。",
     "get_customer_tier": "get_customer_tier(customer_id) -> 顾客会员等级（bronze/silver/gold）及联系方式。",
@@ -115,18 +115,41 @@ class RefundEnv:
             it["returnable"] = bool(it["returnable"])
         policy_id = f"POL-{order_id}"
         self._fetched_policies[order_id] = policy_id
-        rules = {
-            "return_window": "退货时限自签收日起算，天数按会员等级：" + "，".join(
-                f"{k} {v} 天" for k, v in RETURN_WINDOW_DAYS.items()),
-            "evidence": f"损坏照片须在签收后 {PHOTO_MAX_HOURS_AFTER_DELIVERY} 小时内拍摄，且对应具体商品；每件损坏商品至少需要一张有效照片（同一件可有多张），认可损坏数量不超过该商品的有效照片数和购买数量。",
-            "non_returnable": "returnable=false 的商品（如电脑）不支持退货退款。",
-            "refund_amount": f"按各项可退损坏商品的 单价 × 认可损坏数量 × 退款比例 求和计算，默认比例 {DEFAULT_REFUND_RATIO:.0%}，运费由商家承担；调整比例或加收运费须转人工。",
-            "manual_review": "退款金额超过会员等级对应的审核阈值须转人工（可调用 need_permission 查询）。",
-            "refund_timing": "退货包裹到达商家后方可退款；未到达时应提醒顾客寄回并等待。",
-        }
+        # The full after-sales policy book. Only some clauses apply to a given
+        # ticket; the agent must pick the applicable ones (R2/R4/R5/R6 for a
+        # damage claim). R1 and R3 are plausible distractors with different
+        # window start dates / refund formulas.
+        clauses = [
+            {"clause_id": "R1", "title": "七天无理由退货",
+             "applies_to": "商品完好、无质量问题，顾客主观不想要",
+             "window": "自下单日起 7 天内",
+             "refund": "按商品单价退款，扣除往返运费"},
+            {"clause_id": "R2", "title": "质量问题 / 运输损坏退货",
+             "applies_to": "顾客收到的商品存在损坏或质量问题",
+             "window_start": "delivered_at",
+             "window_days_by_tier": dict(RETURN_WINDOW_DAYS),
+             "evidence": {"photo_taken_within_hours_after_delivery": PHOTO_MAX_HOURS_AFTER_DELIVERY,
+                          "min_valid_photos_per_damaged_unit": 1},
+             "refund": {"basis": "unit_price × accepted_damaged_qty",
+                        "ratio": DEFAULT_REFUND_RATIO, "shipping": "merchant_pays",
+                        "ratio_or_shipping_change": "manual_review"}},
+            {"clause_id": "R3", "title": "生鲜 / 食品",
+             "applies_to": "category=food 的商品",
+             "window": "签收后 48 小时内", "refund": "仅退商品款，不需寄回"},
+            {"clause_id": "R4", "title": "人工审核",
+             "applies_to": "所有退款",
+             "rule": "退款金额超过客户等级对应的审核阈值时，不得直接退款，须转人工",
+             "tool": "need_permission"},
+            {"clause_id": "R5", "title": "不可退商品",
+             "applies_to": "returnable=false 的商品",
+             "rule": "不支持退货退款，质量问题也不例外"},
+            {"clause_id": "R6", "title": "退款时机",
+             "applies_to": "需要寄回的退货",
+             "rule": "退货包裹状态为 arrived_at_merchant 后才可退款；否则通知顾客寄回并等待"},
+        ]
         return {"ok": True, "policy_id": policy_id, "order_id": order_id,
                 "customer_id": order["customer_id"], "order_date": order["order_date"],
-                "items": items, "rules": rules, "current_date": CURRENT_DATE}
+                "items": items, "clauses": clauses, "current_date": CURRENT_DATE}
 
     def check_attachment(self, order_id):
         bad = self._check_order_arg(order_id)
